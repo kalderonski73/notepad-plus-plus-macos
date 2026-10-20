@@ -33,6 +33,21 @@ From top to bottom, the main window has:
 
 Keyboard shortcuts work the same as before.
 
+## Customisable toolbar
+
+One layout drives both looks, Classic and Tahoe (Liquid Glass). Open **Settings → Toolbar** (or **Tahoe**) to:
+
+- show or hide whole groups, or individual buttons;
+- put each button on the toolbar, in the group's overflow menu, or hide it;
+- reorder buttons by dragging or with Move Up and Move Down;
+- turn Tahoe mode on or off (takes effect after a restart), or reset to the defaults.
+
+The layout is saved in `~/Library/Application Support/NP++/toolbarLayout.xml`. New-tab and close-tab stay visible at any window width. Groups include Look (editor theme and window opacity) and Large (large file sections).
+
+## Large files
+
+Opening a file above the size limit lets you open just a section of it, or load the whole file. **View → Large File Sections** moves to the next or previous section or to a byte offset, and saving writes the section back into the file without rewriting the rest.
+
 ## Editor theme
 
 The editor text area can use light or dark colours independently of the window. Choose **View → Editor Theme → Follow App Theme, Light or Dark**, or click the half-circle button in the toolbar to flip between light and dark. The setting applies to every open editor and is kept between launches.
