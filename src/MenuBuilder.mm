@@ -601,6 +601,15 @@ static NSMenu *buildLanguageMenu() {
     [appearanceMenu addItem:item(@"Import Style Theme(s)…", @selector(importStyleTheme:),      @"")];
     [viewMenu addItem:withSubmenu(@"Appearance", appearanceMenu)];
 
+    NSMenu *editorThemeMenu = submenu(@"Editor Theme");
+    NSArray<NSString *> *modes = @[@"Follow App Theme", @"Light", @"Dark"];
+    for (NSInteger i = 0; i < modes.count; i++) {
+        NSMenuItem *mi = item(modes[i], @selector(setEditorTheme:), @"");
+        mi.tag = i;
+        [editorThemeMenu addItem:mi];
+    }
+    [viewMenu addItem:withSubmenu(@"Editor Theme", editorThemeMenu)];
+
     NSMenu *showSymMenu = submenu(@"Show Symbol");
     [showSymMenu addItem:item(@"Show White Space and TAB", @selector(showWhiteSpaceAndTab:), @"")];
     [showSymMenu addItem:item(@"Show End of Line",        @selector(showEndOfLine:),        @"")];

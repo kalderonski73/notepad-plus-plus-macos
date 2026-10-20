@@ -1023,6 +1023,8 @@ static NSToolbarItemIdentifier const kTBGroup7  = @"TB_G7";  // view toggles (wr
 static NSToolbarItemIdentifier const kTBGroup8  = @"TB_G8";  // panels
 static NSToolbarItemIdentifier const kTBGroup9  = @"TB_G9";  // monitoring
 static NSToolbarItemIdentifier const kTBGroup10 = @"TB_G10"; // macro
+extern NSString *const kPrefEditorTheme;
+static NSToolbarItemIdentifier const kTBEditorTheme = @"TB_EditorTheme"; // editor light/dark
 
 // Default-mode plugin grouping: plugin toolbar buttons are packed into one
 // toolbar item per plugin (grouped by plugin directory). The item identifier is
@@ -2267,6 +2269,34 @@ static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
     return [self currentEditor];
 }
 
+#pragma mark - Editor theme (light/dark for all editor text areas)
+
+// Re-applies colours to every open editor after the editor theme changes.
+- (void)_applyEditorThemeToAll {
+    NSMutableArray<EditorView *> *editors = [NSMutableArray array];
+    for (TabManager *tm in @[_tabManager, _subTabManagerH, _subTabManagerV]) {
+        if (tm) [editors addObjectsFromArray:tm.allEditors];
+    }
+    for (EditorView *ed in editors) {
+        [ed applyDefaultTheme];
+        [ed applyThemeColors];
+    }
+}
+
+// View > Editor Theme: the tag is the mode (0 follow app, 1 light, 2 dark).
+- (void)setEditorTheme:(NSMenuItem *)sender {
+    [[NSUserDefaults standardUserDefaults] setInteger:sender.tag forKey:kPrefEditorTheme];
+    [self _applyEditorThemeToAll];
+}
+
+// Toolbar button: flips the editor between light and dark.
+- (void)toggleEditorThemeFromToolbar:(id)sender {
+    NSInteger mode = [[NSUserDefaults standardUserDefaults] integerForKey:kPrefEditorTheme];
+    BOOL darkShown = (mode == 2) || (mode == 0 && [NppThemeManager shared].isDark);
+    [[NSUserDefaults standardUserDefaults] setInteger:(darkShown ? 1 : 2) forKey:kPrefEditorTheme];
+    [self _applyEditorThemeToAll];
+}
+
 #pragma mark - Toolbar (NSToolbarDelegate)
 
 // Classic items, built by the same delegate as before, so the buttons, groups and
@@ -3171,6 +3201,7 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
              kTBGroup8,   // panels
              kTBGroup9,   // monitoring
              kTBGroup10,  // macro (no trailing separator)
+             kTBEditorTheme,
              NSToolbarFlexibleSpaceItemIdentifier,
              kTBTabControls];
 }
@@ -3371,6 +3402,16 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
 - (NSToolbarItem *)_classicToolbarItemForIdentifier:(NSToolbarItemIdentifier)ident {
     if ([ident isEqualToString:kTBTabControls])
         return [self makeTabControlsToolbarItem];
+
+    if ([ident isEqualToString:kTBEditorTheme]) {
+        NSToolbarItem *item = [[NSToolbarItem alloc] initWithItemIdentifier:ident];
+        item.image = [NSImage imageWithSystemSymbolName:@"circle.lefthalf.filled" accessibilityDescription:nil];
+        item.label = @"Editor Theme";
+        item.toolTip = @"Switch the editor between light and dark";
+        item.target = self;
+        item.action = @selector(toggleEditorThemeFromToolbar:);
+        return item;
+    }
 
     // User-configured toolbar: single item with all visible buttons in XML order
     if ([ident isEqualToString:kTBUserConfig])
@@ -6780,6 +6821,12 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         ? (NSMenuItem *)item : nil;
     EditorView *ed = [self currentEditor];
     BOOL recording = ed && ed.isRecordingMacro;
+
+    if (action == @selector(setEditorTheme:)) {
+        NSInteger mode = [[NSUserDefaults standardUserDefaults] integerForKey:kPrefEditorTheme];
+        if (mi) mi.state = (mode == mi.tag) ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    }
 
     // Undo and Redo follow the editor's undo history, for menus and toolbar buttons alike.
     if (action == @selector(undo:))

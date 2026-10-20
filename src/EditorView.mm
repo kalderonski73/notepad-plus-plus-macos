@@ -1,4 +1,20 @@
 #import "EditorView.h"
+
+// Editor-area theme: 0 = follow the app style, 1 = light, 2 = dark. Applies to every editor.
+extern NSString *const kPrefEditorTheme;
+NSString *const kPrefEditorTheme = @"NPPEditorTheme";
+
+// Replaces the editor text colours when an explicit editor theme is chosen.
+static void NppApplyEditorThemeOverride(NSColor **fg, NSColor **bg) {
+    NSInteger et = [[NSUserDefaults standardUserDefaults] integerForKey:kPrefEditorTheme];
+    if (et == 2) {
+        *fg = [NSColor colorWithSRGBRed:0xDC/255.0 green:0xDC/255.0 blue:0xCC/255.0 alpha:1.0];
+        *bg = [NSColor colorWithSRGBRed:0x3F/255.0 green:0x3F/255.0 blue:0x3F/255.0 alpha:1.0];
+    } else if (et == 1) {
+        *fg = [NSColor blackColor];
+        *bg = [NSColor whiteColor];
+    }
+}
 #import "NppPaths.h"
 #import "NppApplication.h"
 #import "NppLangsManager.h"
@@ -1556,6 +1572,7 @@ static NSColor *nppColorFromHex(NSString *hex) {
     if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableBg]       && gov.bgColor)        bg       = gov.bgColor;
     if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableFont]     && gov.fontName.length>0) fontName = gov.fontName;
     if (gov && [_ud boolForKey:kPrefGlobalOverrideEnableFontSize] && gov.fontSize > 0)   fontSize = gov.fontSize;
+    NppApplyEditorThemeOverride(&fg, &bg);
     BOOL defBold      = gsDefault.bold;
     BOOL defItalic    = gsDefault.italic;
     BOOL defUnderline = gsDefault.underline;
@@ -1756,6 +1773,7 @@ static NSColor *nppColorFromHex(NSString *hex) {
     NSInteger fontSize = storeD.globalFontSize;
     NSColor *fg = storeD.globalFg;
     NSColor *bg = storeD.globalBg;
+    NppApplyEditorThemeOverride(&fg, &bg);
     NPPStyleEntry *gsDefault = [storeD globalStyleNamed:@"Default Style"];
     BOOL defBold      = gsDefault.bold;
     BOOL defItalic    = gsDefault.italic;
