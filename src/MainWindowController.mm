@@ -1025,6 +1025,7 @@ static NSToolbarItemIdentifier const kTBGroup9  = @"TB_G9";  // monitoring
 static NSToolbarItemIdentifier const kTBGroup10 = @"TB_G10"; // macro
 extern NSString *const kPrefEditorTheme;
 static NSToolbarItemIdentifier const kTBEditorTheme = @"TB_EditorTheme"; // editor light/dark
+static NSToolbarItemIdentifier const kTBWindowOpacity = @"TB_WindowOpacity"; // see-through window
 
 // Default-mode plugin grouping: plugin toolbar buttons are packed into one
 // toolbar item per plugin (grouped by plugin directory). The item identifier is
@@ -2269,6 +2270,63 @@ static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
     return [self currentEditor];
 }
 
+#pragma mark - Window opacity (see through the app while reading)
+
+static NSString *const kPrefWindowOpacity = @"NPPWindowOpacity";
+
+// Lowest opacity keeps the window readable; 1.0 is fully opaque (the default).
+static const double kMinWindowOpacity = 0.3;
+
+- (double)_savedWindowOpacity {
+    double a = [[NSUserDefaults standardUserDefaults] doubleForKey:kPrefWindowOpacity];
+    if (a < kMinWindowOpacity || a > 1.0) a = 1.0;
+    return a;
+}
+
+- (void)_applyWindowOpacity {
+    self.window.alphaValue = [self _savedWindowOpacity];
+}
+
+// Toolbar button: a popover with a slider, anchored at the right end of the toolbar row.
+- (void)showWindowOpacityPopover:(id)sender {
+    NSViewController *vc = [[NSViewController alloc] init];
+    NSView *box = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 64)];
+
+    NSTextField *label = [NSTextField labelWithString:@""];
+    label.frame = NSMakeRect(16, 38, 228, 18);
+    label.alignment = NSTextAlignmentCenter;
+
+    NSSlider *slider = [NSSlider sliderWithValue:[self _savedWindowOpacity] * 100
+                                        minValue:kMinWindowOpacity * 100
+                                        maxValue:100
+                                          target:self
+                                          action:@selector(windowOpacitySliderChanged:)];
+    slider.frame = NSMakeRect(16, 12, 228, 22);
+    slider.continuous = YES;
+    slider.tag = 9001;
+    label.stringValue = [NSString stringWithFormat:@"Opacity %d%%", (int)round(slider.doubleValue)];
+    label.tag = 9002;
+
+    [box addSubview:label];
+    [box addSubview:slider];
+    vc.view = box;
+
+    NSPopover *popover = [[NSPopover alloc] init];
+    popover.behavior = NSPopoverBehaviorTransient;
+    popover.contentViewController = vc;
+    NSRect anchor = NSMakeRect(NSMaxX(_contentToolbar.bounds) - 40, 0, 40, _contentToolbar.bounds.size.height);
+    [popover showRelativeToRect:anchor ofView:_contentToolbar preferredEdge:NSRectEdgeMinY];
+}
+
+- (void)windowOpacitySliderChanged:(NSSlider *)slider {
+    double a = slider.doubleValue / 100.0;
+    if (a < kMinWindowOpacity) a = kMinWindowOpacity;
+    [[NSUserDefaults standardUserDefaults] setDouble:a forKey:kPrefWindowOpacity];
+    self.window.alphaValue = a;
+    NSTextField *label = (NSTextField *)[slider.superview viewWithTag:9002];
+    label.stringValue = [NSString stringWithFormat:@"Opacity %d%%", (int)round(a * 100)];
+}
+
 #pragma mark - Editor theme (light/dark for all editor text areas)
 
 // Re-applies colours to every open editor after the editor theme changes.
@@ -3205,6 +3263,7 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
              kTBGroup9,   // monitoring
              kTBGroup10,  // macro (no trailing separator)
              kTBEditorTheme,
+             kTBWindowOpacity,
              NSToolbarFlexibleSpaceItemIdentifier,
              kTBTabControls];
 }
@@ -3405,6 +3464,16 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
 - (NSToolbarItem *)_classicToolbarItemForIdentifier:(NSToolbarItemIdentifier)ident {
     if ([ident isEqualToString:kTBTabControls])
         return [self makeTabControlsToolbarItem];
+
+    if ([ident isEqualToString:kTBWindowOpacity]) {
+        NSToolbarItem *item = [[NSToolbarItem alloc] initWithItemIdentifier:ident];
+        item.image = [NSImage imageWithSystemSymbolName:@"eye" accessibilityDescription:nil];
+        item.label = @"Opacity";
+        item.toolTip = @"Window opacity: see through the app while reading";
+        item.target = self;
+        item.action = @selector(showWindowOpacityPopover:);
+        return item;
+    }
 
     if ([ident isEqualToString:kTBEditorTheme]) {
         NSToolbarItem *item = [[NSToolbarItem alloc] initWithItemIdentifier:ident];
@@ -4348,6 +4417,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         for (NSMenuItem *mi in top.submenu.itemArray)
             if (mi.action == @selector(toggleToolbarShown:)) mi.target = self;
 
+    [self _applyWindowOpacity];
     _inWindowMenuBar = [[NppInWindowMenuBar alloc] init];
     __weak MainWindowController *menuBarOwner = self;
     _inWindowMenuBar.validator = ^BOOL(NSMenuItem *item) {
