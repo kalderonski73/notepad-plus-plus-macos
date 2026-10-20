@@ -32,7 +32,7 @@
       <Button hide="no"  id="TB_Close"         action="closeCurrentTab:"          name="Close"                  trigger="click" />
       <Button hide="no"  id="TB_CloseAll"      action="closeAllTabs:"             name="Close All"              trigger="click" />
       <Button hide="no"  id="TB_Print"         action="printDocument:"            name="Print..."               trigger="click" />
-      <Button hide="yes" id="TB_SaveAs"        action="saveDocumentAs:"           name="Save As..."             trigger="click" />
+      <Button hide="no"  id="TB_SaveAs"        action="saveDocumentAs:"           name="Save As..."             trigger="click" />
       <Button hide="yes" id="TB_SaveCopy"      action="saveDocumentCopyAs:"       name="Save a Copy As..."      trigger="click" />
       <Button hide="yes" id="TB_Rename"        action="renameDocument:"           name="Rename..."              trigger="click" />
       <Button hide="yes" id="TB_Reload"        action="reloadFromDisk:"           name="Reload from Disk"       trigger="click" />

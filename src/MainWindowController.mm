@@ -943,6 +943,7 @@ void regenerateToolbarExample(void) {
 static NSToolbarItemIdentifier const kTBNew         = @"TB_New";
 static NSToolbarItemIdentifier const kTBOpen        = @"TB_Open";
 static NSToolbarItemIdentifier const kTBSave        = @"TB_Save";
+static NSToolbarItemIdentifier const kTBSaveAs      = @"TB_SaveAs";
 static NSToolbarItemIdentifier const kTBSaveAll     = @"TB_SaveAll";
 static NSToolbarItemIdentifier const kTBClose       = @"TB_Close";
 static NSToolbarItemIdentifier const kTBCloseAll    = @"TB_CloseAll";
@@ -1813,6 +1814,7 @@ static NSArray<NSArray *> *toolbarDescriptors() {
         @[kTBNew,         @"New",        @"New Tab",                  @"newFile",          @"newDocument:"],
         @[kTBOpen,        @"Open",       @"Open File",                @"openFile",         @"openDocument:"],
         @[kTBSave,        @"Save",       @"Save",                     @"saveFile",         @"saveDocument:"],
+        @[kTBSaveAs,      @"Save As",    @"Save As…",                 @"saveFile",         @"saveDocumentAs:"],
         @[kTBSaveAll,     @"Save All",   @"Save All",                 @"saveAll",          @"saveAllDocuments:"],
         @[kTBClose,       @"Close",      @"Close Tab",                @"closeFile",        @"closeCurrentTab:"],
         @[kTBCloseAll,    @"Close All",  @"Close All Tabs",           @"closeAll",         @"closeAllTabs:"],
