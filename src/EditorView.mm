@@ -1,5 +1,21 @@
 #import "EditorView.h"
 
+// Window fade (window opacity slider below 100%) halves the contrast of light themes.
+// Pure black text and a stronger current-line tint keep the letters readable while faded.
+static BOOL NppWindowIsFaded(void) {
+    double a = [[NSUserDefaults standardUserDefaults] doubleForKey:@"NPPWindowOpacity"];
+    return a >= 0.3 && a < 1.0;
+}
+
+// Current-line highlight is off while the window is faded in light theme (it showed as a dark bar).
+static BOOL NppCaretLineAllowed(ScintillaView *sci, BOOL requested) {
+    if (!requested || !NppWindowIsFaded()) return requested;
+    long bgInt = [sci message:SCI_STYLEGETBACK wParam:STYLE_DEFAULT];
+    double r = (bgInt & 0xFF) / 255.0, g = ((bgInt >> 8) & 0xFF) / 255.0, b = ((bgInt >> 16) & 0xFF) / 255.0;
+    return (0.299 * r + 0.587 * g + 0.114 * b) <= 0.5;
+}
+
+
 // Editor-area theme: 0 = follow the app style, 1 = light, 2 = dark. Applies to every editor.
 extern NSString *const kPrefEditorTheme;
 NSString *const kPrefEditorTheme = @"NPPEditorTheme";
@@ -1773,9 +1789,14 @@ static NSColor *nppColorFromHex(NSString *hex) {
     NSInteger fontSize = storeD.globalFontSize;
     NSColor *fg = storeD.globalFg;
     NSColor *bg = storeD.globalBg;
+    if (NppWindowIsFaded() && [bg colorUsingColorSpace:[NSColorSpace sRGBColorSpace]].brightnessComponent > 0.5)
+        fg = [NSColor blackColor];
     NppApplyEditorThemeOverride(&fg, &bg);
     NPPStyleEntry *gsDefault = [storeD globalStyleNamed:@"Default Style"];
     BOOL defBold      = gsDefault.bold;
+    // Fade + light theme: bold strokes keep the letters readable through the window fade.
+    if (NppWindowIsFaded() && [bg colorUsingColorSpace:[NSColorSpace sRGBColorSpace]].brightnessComponent > 0.5)
+        defBold = YES;
     BOOL defItalic    = gsDefault.italic;
     BOOL defUnderline = gsDefault.underline;
 
@@ -2580,7 +2601,7 @@ int NppScintillaDefaultKeyCombos(int sciID, int *combos, int maxCombos) {
     [sci message:SCI_SETMARGINWIDTHN wParam:0 lParam:showLineNumbers ? 44 : 0];
 
     BOOL hlLine = [ud boolForKey:kPrefHighlightCurrentLine];
-    [sci message:SCI_SETCARETLINEVISIBLE wParam:hlLine ? 1 : 0];
+    [sci message:SCI_SETCARETLINEVISIBLE wParam:NppCaretLineAllowed(sci, hlLine) ? 1 : 0];
 
     // Indentation guides — persisted toggle; the NPPPreferencesChanged
     // path re-runs this method on every editor when the toggle flips.
