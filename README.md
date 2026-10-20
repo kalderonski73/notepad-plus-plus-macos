@@ -29,6 +29,10 @@ From top to bottom, the main window has:
 
 Keyboard shortcuts work the same as before.
 
+## Editor theme
+
+The editor text area can use light or dark colours independently of the window. Choose **View → Editor Theme → Follow App Theme, Light or Dark**, or click the half-circle button in the toolbar to flip between light and dark. The setting applies to every open editor and is kept between launches.
+
 ## Requirements
 
 - macOS 11 (Big Sur) or later
