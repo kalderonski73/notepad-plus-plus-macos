@@ -65,7 +65,21 @@
 }
 
 // Items are validated just before the menu opens, through the controller's validator.
+// Popup items use the same 12-point font as the menu-row buttons, not the larger
+// system menu font. Applied recursively so submenus match too.
+static void NppApplyMenuFont(NSMenu *menu) {
+    NSFont *font = [NSFont systemFontOfSize:12];
+    for (NSMenuItem *item in menu.itemArray) {
+        if (!item.isSeparatorItem && item.title.length) {
+            item.attributedTitle = [[NSAttributedString alloc] initWithString:item.title
+                attributes:@{ NSFontAttributeName: font }];
+        }
+        if (item.submenu) NppApplyMenuFont(item.submenu);
+    }
+}
+
 - (void)menuNeedsUpdate:(NSMenu *)menu {
+    NppApplyMenuFont(menu);
     if (!self.validator) return;
     for (NSMenuItem *item in menu.itemArray) {
         if (item.action && !item.isSeparatorItem) item.enabled = self.validator(item);

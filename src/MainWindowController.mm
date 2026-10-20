@@ -4326,6 +4326,11 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         [_contentToolbar setToolbarItems:[self _buildClassicToolbarItems]];
         [content addSubview:_contentToolbar];
         [self _refreshContentToolbarEnabled];
+        // Typing and undo change the editor without a notification, so keep the row's
+        // enabled state current with a light periodic refresh.
+        [NSTimer scheduledTimerWithTimeInterval:0.5 target:self
+                                       selector:@selector(_refreshContentToolbarEnabled)
+                                       userInfo:nil repeats:YES];
         BOOL shown = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefToolbarVisible];
         _contentToolbarHeight = [_contentToolbar.heightAnchor constraintEqualToConstant:(shown ? 34.0 : 0.0)];
         _contentToolbar.hidden = !shown;
@@ -6775,6 +6780,12 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         ? (NSMenuItem *)item : nil;
     EditorView *ed = [self currentEditor];
     BOOL recording = ed && ed.isRecordingMacro;
+
+    // Undo and Redo follow the editor's undo history, for menus and toolbar buttons alike.
+    if (action == @selector(undo:))
+        return ed && [ed.scintillaView message:SCI_CANUNDO] != 0;
+    if (action == @selector(redo:))
+        return ed && [ed.scintillaView message:SCI_CANREDO] != 0;
 
     // Dynamic menu title for toggle item
     if (action == @selector(toggleMacroRecording:)) {

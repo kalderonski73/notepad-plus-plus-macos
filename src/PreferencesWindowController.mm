@@ -271,7 +271,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         kPrefLineNumDynWidth:      @YES,
         kPrefInSelThreshold:       @1024,
         kPrefFuncListUseXML:       @YES,
-        kPrefToolbarIconScale:     @1.0,  // 0.50/0.75/0.90/1.00/1.25/1.50 — restart required
+        kPrefToolbarIconScale:     @0.75,  // 0.50/0.75/0.90/1.00/1.25/1.50 — restart required
         kPrefFileStatusAutoDetection:  @YES,
         kPrefFileStatusUpdateSilently: @NO,
         kPrefDarkMode:             @0,   // 0=Auto, 1=Light, 2=Dark

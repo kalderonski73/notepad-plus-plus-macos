@@ -2578,6 +2578,9 @@ int NppScintillaDefaultKeyCombos(int sciID, int *combos, int maxCombos) {
     BOOL wordWrap = [ud boolForKey:kPrefWordWrap];
     _wordWrapEnabled = wordWrap;
     [sci message:SCI_SETWRAPMODE wParam:wordWrap ? SC_WRAP_WORD : SC_WRAP_NONE];
+    // Refreshing the preferences can leave a horizontal scroll from wrapped text; with wrap
+    // off, return to the left edge so the first columns are not clipped.
+    if (!wordWrap) [sci message:SCI_SETXOFFSET wParam:0];
 
     NSInteger zoomLevel = [ud integerForKey:kPrefZoomLevel];
     [sci message:SCI_SETZOOM wParam:(uptr_t)zoomLevel];
@@ -3005,6 +3008,9 @@ static const int kGitGutterMargin   = 4;  // margin index for git gutter
 - (void)setWordWrapEnabled:(BOOL)enabled {
     _wordWrapEnabled = enabled;
     [_scintillaView message:SCI_SETWRAPMODE wParam:enabled ? SC_WRAP_WORD : SC_WRAP_NONE];
+    // With wrap off, a horizontal scroll left over from wrapped text must not clip the
+    // first columns; return to the left edge.
+    if (!enabled) [_scintillaView message:SCI_SETXOFFSET wParam:0];
 }
 
 #pragma mark - Overwrite Mode
