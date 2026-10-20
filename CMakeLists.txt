@@ -197,6 +197,9 @@ add_executable(NotepadPlusPlusMac MACOSX_BUNDLE ${APP_SRCS} ${APP_HEADERS})
 # to a stale copy in the bundle was silently skipped on incremental builds.
 # rsync -a archive-mirrors the source tree, overwriting any older bundle copy.
 add_custom_command(TARGET NotepadPlusPlusMac POST_BUILD
+    # rsync (macOS 2.6.9) cannot create missing parent folders, and a clean checkout has no
+    # Resources folder yet, so create it first.
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:NotepadPlusPlusMac>/Contents/Resources/icons"
     COMMAND /usr/bin/rsync -a
         "${CMAKE_SOURCE_DIR}/resources/icons/"
         "$<TARGET_BUNDLE_DIR:NotepadPlusPlusMac>/Contents/Resources/icons/"
