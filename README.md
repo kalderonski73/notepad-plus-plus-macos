@@ -9,11 +9,11 @@ native menus, toolbars, file dialogs, and light and dark appearance.
 <table>
   <tr>
     <td align="center" valign="top" width="50%">
-      <img src="images/screenshot-light.png" alt="NP++ in light mode" width="480"><br>
+      <img src="images/layout-light-v2.png" alt="NP++ in light mode" width="480"><br>
       <em>Light mode</em>
     </td>
     <td align="center" valign="top" width="50%">
-      <img src="images/screenshot-dark.png" alt="NP++ in dark mode" width="480"><br>
+      <img src="images/layout-dark-v2.png" alt="NP++ in dark mode" width="480"><br>
       <em>Dark mode</em>
     </td>
   </tr>
