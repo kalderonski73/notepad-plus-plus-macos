@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NP++ for macOS</title>
+<style>
+  :root { color-scheme: light dark; --fg:#1d1d1f; --muted:#6e6e73; --bg:#fbfbfd; --card:#ffffff; --accent:#0a66c2; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#f5f5f7; --muted:#a1a1a6; --bg:#111113; --card:#1c1c1e; --accent:#4bbffb; } }
+  body { margin:0; font:16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:var(--fg); background:var(--bg); }
+  main { max-width:1000px; margin:0 auto; padding:48px 20px 80px; }
+  h1 { font-size:2.6rem; margin:0 0 8px; }
+  h2 { margin-top:48px; font-size:1.6rem; }
+  p.lead { color:var(--muted); font-size:1.15rem; margin-top:0; }
+  .shots { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:24px; }
+  .shots figure { margin:0; background:var(--card); border-radius:12px; padding:12px; }
+  .shots img { width:100%; border-radius:8px; display:block; }
+  .shots figcaption { color:var(--muted); text-align:center; margin-top:8px; font-style:italic; }
+  @media (max-width:720px) { .shots { grid-template-columns:1fr; } }
+  ul { padding-left:22px; }
+  li { margin:6px 0; }
+  pre { background:var(--card); padding:14px 16px; border-radius:10px; overflow-x:auto; }
+  a { color:var(--accent); }
+  footer { margin-top:64px; color:var(--muted); font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>NP++ for macOS</h1>
+  <p class="lead">A native macOS port of Notepad++, built with AppKit, Scintilla and Lexilla.</p>
+
+  <div class="shots">
+    <figure><img src="images/layout-light-v2.png" alt="NP++ in light mode"><figcaption>Light mode</figcaption></figure>
+    <figure><img src="images/layout-dark-v2.png" alt="NP++ in dark mode"><figcaption>Dark mode</figcaption></figure>
+  </div>
+
+  <h2>Features</h2>
+  <ul>
+    <li>Menu row above a toolbar row, with a » overflow popover for hidden buttons.</li>
+    <li>Editor theme: light or dark for all editor text areas, independent of the window theme.</li>
+    <li>Encoding support for UTF-8 (with and without BOM), UTF-16, and Windows-1252, with warnings before characters are replaced.</li>
+    <li>Find, replace, go to line, macros, and Document Map, Document List and Function List panels.</li>
+  </ul>
+
+  <h2>Build from source</h2>
+  <pre>cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release --parallel
+open build/NP++.app</pre>
+
+  <h2>Links</h2>
+  <ul>
+    <li><a href="https://github.com/kalderonski73/notepad-plus-plus-macos">Source code on GitHub</a></li>
+    <li><a href="https://github.com/kalderonski73/notepad-plus-plus-macos/blob/master/README.md">README</a></li>
+  </ul>
+
+  <footer>GPL-3.0 licence. Notepad++ is the work of its original authors.</footer>
+</main>
+</body>
+</html>
