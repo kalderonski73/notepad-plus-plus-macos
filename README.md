@@ -12,6 +12,16 @@ native menus, toolbars, file dialogs, and light and dark appearance.
   <br><em>Light mode (left) and dark mode (right)</em>
 </p>
 
+## Window layout
+
+From top to bottom, the main window has:
+
+- **Menu row:** File, Edit, Search and the other document menus. The macOS menu bar keeps only the NP++ app menu.
+- **Toolbar row:** the editing and view buttons. When the window is narrow, buttons that don't fit move behind the » button, which opens a vertical list of their icons.
+- **Tabs and editor:** open documents, with the editor below them and the status bar at the bottom.
+
+Keyboard shortcuts work the same as before.
+
 ## Requirements
 
 - macOS 11 (Big Sur) or later
