@@ -2289,6 +2289,29 @@ static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
 - (void)_rebuildContentToolbarItems {
     if (!_contentToolbar) return;
     [_contentToolbar setToolbarItems:[self _buildClassicToolbarItems]];
+    [self _refreshContentToolbarEnabled];
+}
+
+static void NppCollectControls(NSView *root, NSMutableArray<NSControl *> *out) {
+    for (NSView *v in root.subviews) {
+        if ([v isKindOfClass:[NSControl class]] && ((NSControl *)v).action) [out addObject:(NSControl *)v];
+        NppCollectControls(v, out);
+    }
+}
+
+// NSToolbar validated its items; the content-area row is validated here instead, through
+// the same validateUserInterfaceItem: the menus use, so enabled state matches the menus.
+- (void)_refreshContentToolbarEnabled {
+    if (!_contentToolbar) return;
+    NSMutableArray<NSControl *> *controls = [NSMutableArray array];
+    for (NSView *item in _contentToolbar.itemViews) {
+        if ([item isKindOfClass:[NSControl class]] && ((NSControl *)item).action)
+            [controls addObject:(NSControl *)item];
+        NppCollectControls(item, controls);
+    }
+    for (NSControl *c in controls) {
+        c.enabled = [self validateUserInterfaceItem:(id)c];
+    }
 }
 
 // One API for the toolbar's visibility: the Classic row or the Tahoe NSToolbar.
@@ -3807,6 +3830,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     // write the pref first, so it's the authoritative cross-source.
     _tbWrap.toggledOn = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefWordWrap];
     [_tbWrap setNeedsDisplay:YES];
+    [self _refreshContentToolbarEnabled];
 
     // Panel toggles (blue highlight when panel is visible)
     _tbDocMap.toggledOn      = _docMapPanel && [_sidePanelHost hasPanel:_docMapPanel];
@@ -4289,6 +4313,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         _contentToolbar.translatesAutoresizingMaskIntoConstraints = NO;
         [_contentToolbar setToolbarItems:[self _buildClassicToolbarItems]];
         [content addSubview:_contentToolbar];
+        [self _refreshContentToolbarEnabled];
         BOOL shown = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefToolbarVisible];
         _contentToolbarHeight = [_contentToolbar.heightAnchor constraintEqualToConstant:(shown ? 34.0 : 0.0)];
         _contentToolbar.hidden = !shown;
