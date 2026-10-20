@@ -14,6 +14,7 @@
 #import "NPPBatchDialog.h"
 #import "MenuBuilder.h"
 #import "InWindowMenuBar.h"
+#import "ContentToolbar.h"
 #import "ColumnEditorPanel.h"
 // FindInFilesPanel removed — all search goes through FindWindow
 #import "SidePanelHost.h"
@@ -1988,6 +1989,8 @@ static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
 
 @implementation MainWindowController {
     NppInWindowMenuBar *_inWindowMenuBar;
+    NppContentToolbar  *_contentToolbar;        // Classic toolbar row (content area)
+    NSLayoutConstraint *_contentToolbarHeight;
     TabManager       *_tabManager;
     FindReplacePanel *_findPanel;
     NSView           *_statusBar;
@@ -2266,12 +2269,58 @@ static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
 
 #pragma mark - Toolbar (NSToolbarDelegate)
 
+// Classic items, built by the same delegate as before, so the buttons, groups and
+// their actions are unchanged. Separators and flexible spaces are standard items.
+- (NSArray<NSToolbarItem *> *)_buildClassicToolbarItems {
+    NSMutableArray<NSToolbarItem *> *items = [NSMutableArray array];
+    for (NSString *ident in [self toolbarDefaultItemIdentifiers:nil]) {
+        NSToolbarItem *item = nil;
+        if ([ident isEqualToString:NSToolbarSeparatorItemIdentifier] ||
+            [ident isEqualToString:NSToolbarFlexibleSpaceItemIdentifier]) {
+            item = [[NSToolbarItem alloc] initWithItemIdentifier:ident];
+        } else {
+            item = [self toolbar:nil itemForItemIdentifier:ident willBeInsertedIntoToolbar:YES];
+        }
+        if (item) [items addObject:item];
+    }
+    return items;
+}
+
+- (void)_rebuildContentToolbarItems {
+    if (!_contentToolbar) return;
+    [_contentToolbar setToolbarItems:[self _buildClassicToolbarItems]];
+}
+
+// One API for the toolbar's visibility: the Classic row or the Tahoe NSToolbar.
+- (BOOL)isToolbarShown {
+    if (_contentToolbar) return !_contentToolbar.hidden;
+    return self.window.toolbar ? self.window.toolbar.visible : NO;
+}
+
+- (void)setToolbarShown:(BOOL)shown {
+    if (_contentToolbar) {
+        _contentToolbar.hidden = !shown;
+        _contentToolbarHeight.constant = shown ? 34.0 : 0.0;
+        return;
+    }
+    if (self.window.toolbar && self.window.toolbar.visible != shown)
+        [self.window toggleToolbarShown:nil];
+}
+
+- (void)toggleToolbarShown:(id)sender {
+    [self setToolbarShown:![self isToolbarShown]];
+}
+
 - (void)buildToolbar {
     // Parse toolbar configuration (hidden buttons, extra buttons, appearance)
     _toolbarConfig = _parseToolbarConfig();
     // Tahoe profile: load (or materialize) the group layout from
     // toolbarButtonsTahoeConf.xml before the toolbar delegate is queried.
     if ([self _toolbarUsesTahoe]) [self _loadTahoeToolbarModel];
+
+    // Classic: the toolbar is a row in the content area (see buildContentView), not the
+    // title-bar NSToolbar. Tahoe keeps NSToolbar for now.
+    if (![self _toolbarUsesTahoe]) return;
 
     NSToolbar *tb = [[NSToolbar alloc] initWithIdentifier:@"NppToolbar"];
     tb.delegate = self;
@@ -2348,6 +2397,10 @@ static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
         @"iconHint":   iconHint ?: @"",
     }];
     [_pluginToolbarItems addObject:pti];
+    if (_contentToolbar) {          // Classic row: rebuild from the updated plugin list
+        [self _rebuildContentToolbarItems];
+        return;
+    }
 
     // DEFAULT mode: plugins are packed into one toolbar item per plugin (grouped
     // by pluginDir) so a plugin that registers several icons gets them sitting
@@ -4231,11 +4284,27 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         [_inWindowMenuBar.heightAnchor constraintEqualToConstant:24.0],
     ]];
 
+    if (!_tahoeGlass) {
+        _contentToolbar = [[NppContentToolbar alloc] init];
+        _contentToolbar.translatesAutoresizingMaskIntoConstraints = NO;
+        [_contentToolbar setToolbarItems:[self _buildClassicToolbarItems]];
+        [content addSubview:_contentToolbar];
+        BOOL shown = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefToolbarVisible];
+        _contentToolbarHeight = [_contentToolbar.heightAnchor constraintEqualToConstant:(shown ? 34.0 : 0.0)];
+        _contentToolbar.hidden = !shown;
+        [NSLayoutConstraint activateConstraints:@[
+            [_contentToolbar.topAnchor constraintEqualToAnchor:_inWindowMenuBar.bottomAnchor],
+            [_contentToolbar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+            [_contentToolbar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+            _contentToolbarHeight,
+        ]];
+    }
+
     [NSLayoutConstraint activateConstraints:@[
         // Search split view fills from top to incremental search bar. In Tahoe the
         // content view spans the whole window (FullSizeContentView), so pin the top
         // to contentLayoutGuide (below the titlebar+toolbar) instead of content.top.
-        [_searchSplitView.topAnchor constraintEqualToAnchor:_inWindowMenuBar.bottomAnchor constant:topInset],
+        [_searchSplitView.topAnchor constraintEqualToAnchor:(_tahoeGlass ? _inWindowMenuBar.bottomAnchor : _contentToolbar.bottomAnchor) constant:topInset],
         [_searchSplitView.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:edgeInset],
         [_searchSplitView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-edgeInset],
         [_searchSplitView.bottomAnchor constraintEqualToAnchor:_incSearchBar.topAnchor constant:(_tahoeGlass ? -6.0 : 0.0)],
@@ -10697,9 +10766,7 @@ static BOOL _writeCLIScript(NSString *script, NSString *path, NSError **outErr) 
 
     // Apply toolbar visibility preference.
     BOOL targetVisible = [ud boolForKey:kPrefToolbarVisible];
-    if (self.window.toolbar && self.window.toolbar.visible != targetVisible) {
-        [self.window toggleToolbarShown:nil];
-    }
+    if ([self isToolbarShown] != targetVisible) [self setToolbarShown:targetVisible];
 
     // Toolbar toggle states (Word wrap, etc.) follow prefs — keep them
     // in sync after a Preferences-pane change.
@@ -10710,9 +10777,7 @@ static BOOL _writeCLIScript(NSString *script, NSString *path, NSError **outErr) 
     // Sync window toolbar visibility when toggled from preferences.
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     BOOL targetVisible = [ud boolForKey:kPrefToolbarVisible];
-    if (self.window.toolbar && self.window.toolbar.visible != targetVisible) {
-        [self.window toggleToolbarShown:nil];
-    }
+    if ([self isToolbarShown] != targetVisible) [self setToolbarShown:targetVisible];
 }
 
 - (void)_darkModeChanged:(NSNotification *)n {
@@ -11520,7 +11585,7 @@ static NSString *languageDisplayName(NSString *langCode) {
 - (void)saveWindowFrame {
     [[NSUserDefaults standardUserDefaults]
         setObject:NSStringFromRect(self.window.frame) forKey:kWindowFrameKey];
-    [[NSUserDefaults standardUserDefaults] setBool:self.window.toolbar.visible forKey:kPrefToolbarVisible];
+    [[NSUserDefaults standardUserDefaults] setBool:[self isToolbarShown] forKey:kPrefToolbarVisible];
 }
 
 - (void)restoreWindowFrame {

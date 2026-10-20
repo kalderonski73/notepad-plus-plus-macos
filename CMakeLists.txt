@@ -113,6 +113,7 @@ set(APP_SRCS
     src/NppTabBar.mm
     src/MenuBuilder.mm
     src/InWindowMenuBar.mm
+    src/ContentToolbar.mm
     src/FindReplacePanel.mm
     src/ColumnEditorPanel.mm
     src/PreferencesWindowController.mm
@@ -156,6 +157,7 @@ set(APP_HEADERS
     src/NppTabBar.h
     src/MenuBuilder.h
     src/InWindowMenuBar.h
+    src/ContentToolbar.h
     src/FindReplacePanel.h
     src/ColumnEditorPanel.h
     src/PreferencesWindowController.h
