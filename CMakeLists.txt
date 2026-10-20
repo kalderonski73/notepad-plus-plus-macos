@@ -458,6 +458,14 @@ foreach(_lang IN LISTS NPP_BUNDLE_LANGUAGES)
             "$<TARGET_BUNDLE_DIR:NotepadPlusPlusMac>/Contents/Resources/${_lang}.lproj/InfoPlist.strings")
 endforeach()
 
+# Copy the bundle's Info.plist explicitly: without it macOS cannot find the app icon
+# (CFBundleIconFile) and shows a generic placeholder.
+add_custom_command(TARGET NotepadPlusPlusMac POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/resources/Info.plist"
+        "$<TARGET_BUNDLE_DIR:NotepadPlusPlusMac>/Contents/Info.plist"
+    COMMENT "Copying Info.plist into app bundle")
+
 # Ad-hoc code signing — gives the app a stable identity so macOS can
 # remember TCC permission grants (Downloads, Desktop, Documents) across launches.
 # Strip extended attributes first (resource forks / Finder info break codesign).
