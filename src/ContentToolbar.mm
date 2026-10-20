@@ -2,6 +2,9 @@
 
 static const CGFloat kContentToolbarHeight = 34.0;
 static const CGFloat kOverflowButtonWidth  = 22.0;
+// Popover icons match the toolbar row: a 20-point icon in a 24-point button.
+static const CGFloat kOverflowIconSize    = 20.0;
+static const CGFloat kOverflowButtonSize  = 24.0;
 
 @interface NppContentToolbar ()
 @property (nonatomic, strong) NSScrollView *scrollView;
@@ -196,7 +199,13 @@ static const CGFloat kOverflowButtonWidth  = 22.0;
                                                 target:self
                                                 action:@selector(_overflowIconClicked:)];
             icon.bordered = NO;
+            // Same icon size as the toolbar row, so the popover matches it.
             icon.imageScaling = NSImageScaleProportionallyUpOrDown;
+            if (icon.image) {
+                NSImage *sized = [icon.image copy];
+                sized.size = NSMakeSize(kOverflowIconSize, kOverflowIconSize);
+                icon.image = sized;
+            }
             icon.toolTip = c.toolTip.length ? c.toolTip : c.accessibilityLabel;
             icon.enabled = c.enabled;
             icon.tag = (NSInteger)entries.count;
@@ -221,8 +230,8 @@ static const CGFloat kOverflowButtonWidth  = 22.0;
         row.spacing = 4;
         for (NSUInteger i = start; i < MIN(start + perRow, icons.count); i++) {
             [row addArrangedSubview:icons[i]];
-            [icons[i].widthAnchor constraintEqualToConstant:32].active = YES;
-            [icons[i].heightAnchor constraintEqualToConstant:32].active = YES;
+            [icons[i].widthAnchor constraintEqualToConstant:kOverflowButtonSize].active = YES;
+            [icons[i].heightAnchor constraintEqualToConstant:kOverflowButtonSize].active = YES;
         }
         [column addArrangedSubview:row];
     }
