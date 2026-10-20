@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/logo.png" alt="NP++ logo" width="128">
+</p>
+
 # NP++ for macOS
 
 NP++ is a native macOS port of Notepad++, written in Objective-C++ with AppKit and the
