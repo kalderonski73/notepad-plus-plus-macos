@@ -4,6 +4,14 @@ NP++ is a native macOS port of Notepad++, written in Objective-C++ with AppKit a
 vendored Scintilla and Lexilla editing components. It runs as a standard Mac app with
 native menus, toolbars, file dialogs, and light and dark appearance.
 
+## Screenshots
+
+<p align="center">
+  <img src="images/screenshot-light.png" alt="NP++ in light mode" width="49%">
+  <img src="images/screenshot-dark.png" alt="NP++ in dark mode" width="49%">
+  <br><em>Light mode (left) and dark mode (right)</em>
+</p>
+
 ## Requirements
 
 - macOS 11 (Big Sur) or later

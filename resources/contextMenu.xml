@@ -4,7 +4,7 @@ Customize the editor right-click context menu.
 
 This file is copied to ~/.nextpad++/contextMenu.xml on first launch.
 To customize, edit the copy in ~/.nextpad++/contextMenu.xml and restart
-Nextpad++. To reset to defaults, delete that file and restart.
+NP++. To reset to defaults, delete that file and restart.
 
 Each <Item> references a command from the main menu bar:
   MenuEntryName   = top-level menu (File, Edit, Search, View, etc.)

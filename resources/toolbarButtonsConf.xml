@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <NotepadPlus>
 <!--
-  Toolbar Configuration for Nextpad++ (macOS)
+  Toolbar Configuration for NP++ (macOS)
   ============================================
   This file controls which buttons appear on the toolbar and how they look.
 
   To customize: copy ~/.nextpad++/toolbarButtonsConf_example.xml
-  to ~/.nextpad++/toolbarButtonsConf.xml, edit it, and relaunch Nextpad++.
+  to ~/.nextpad++/toolbarButtonsConf.xml, edit it, and relaunch NP++.
 
   Each <Button> has these attributes:
     hide     = "yes" or "no" (whether the button is visible on the toolbar)
