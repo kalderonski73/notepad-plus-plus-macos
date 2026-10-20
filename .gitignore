@@ -1,0 +1,51 @@
+# Claude Code project data (memory, sessions, settings)
+.claude/
+.vscode/
+# Build output
+build/
+build-release/
+build-release-tahoe/
+build_bkp/
+build-release_bkp/
+build-tests/
+*.xctest/
+
+# Release artifacts (DMGs go as GitHub Release assets, not in repo)
+downloads/*.dmg
+
+# Temporary working files
+tmp/
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.a
+*.o
+
+# Documentation and screenshots (local only)
+docs/
+screenshots/
+
+# Build/release tools (local only)
+tools/
+
+# Code signing — NEVER commit certificates, keys, or passwords
+*.p12
+*.cer
+*.certSigningRequest
+*.provisionprofile
+signing-config.sh

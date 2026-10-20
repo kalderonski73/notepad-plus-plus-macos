@@ -1,0 +1,35 @@
+name: macOS build and tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure app
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build app
+        run: cmake --build build --config Release --parallel
+
+      - name: Configure tests
+        run: cmake -S . -B build-tests -DNPP_BUILD_TESTS=ON
+
+      - name: Build XCTest bundle
+        run: cmake --build build-tests --target NppEncodingTests --parallel
+
+      - name: Run XCTest
+        run: xcrun xctest build-tests/NppEncodingTests.xctest
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: NP++-macOS
+          path: build/NP++.app
