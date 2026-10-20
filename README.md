@@ -79,3 +79,5 @@ The app icon is `resources/npp.icns`, generated from a 1024×1024 master.
 ## License
 
 GPL-3.0. See [LICENSE](LICENSE).
+
+This macOS port is based on [Nextpad++ for macOS](https://github.com/nextpad-plus-plus/nextpad-plus-plus-macos) and on [Notepad++](https://notepad-plus-plus.org), both by their original authors.
