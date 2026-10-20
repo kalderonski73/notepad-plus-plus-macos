@@ -6,11 +6,18 @@ native menus, toolbars, file dialogs, and light and dark appearance.
 
 ## Screenshots
 
-<p align="center">
-  <img src="images/screenshot-light.png" alt="NP++ in light mode" width="49%">
-  <img src="images/screenshot-dark.png" alt="NP++ in dark mode" width="49%">
-  <br><em>Light mode (left) and dark mode (right)</em>
-</p>
+<table>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <img src="images/screenshot-light.png" alt="NP++ in light mode" width="480"><br>
+      <em>Light mode</em>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <img src="images/screenshot-dark.png" alt="NP++ in dark mode" width="480"><br>
+      <em>Dark mode</em>
+    </td>
+  </tr>
+</table>
 
 ## Window layout
 
