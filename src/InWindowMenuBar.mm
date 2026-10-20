@@ -57,10 +57,19 @@
         button.bordered = NO;
         button.font = [NSFont systemFontOfSize:12];
         button.tag = (NSInteger)menus.count;
+        top.submenu.delegate = self;
         [menus addObject:top.submenu];
         [self.stack addArrangedSubview:button];
     }
     self.menus = menus;
+}
+
+// Items are validated just before the menu opens, through the controller's validator.
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+    if (!self.validator) return;
+    for (NSMenuItem *item in menu.itemArray) {
+        if (item.action && !item.isSeparatorItem) item.enabled = self.validator(item);
+    }
 }
 
 - (void)_menuButtonClicked:(NSButton *)sender {

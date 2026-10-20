@@ -4305,6 +4305,12 @@ static BOOL groupHasTrailingSep(NSString *ident) {
             if (mi.action == @selector(toggleToolbarShown:)) mi.target = self;
 
     _inWindowMenuBar = [[NppInWindowMenuBar alloc] init];
+    __weak MainWindowController *menuBarOwner = self;
+    _inWindowMenuBar.validator = ^BOOL(NSMenuItem *item) {
+        MainWindowController *owner = menuBarOwner;
+        if (!owner || ![owner respondsToSelector:item.action]) return YES;
+        return [owner validateUserInterfaceItem:item];
+    };
     _inWindowMenuBar.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:_inWindowMenuBar];
     [NSLayoutConstraint activateConstraints:@[
