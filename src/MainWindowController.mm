@@ -1,7 +1,7 @@
 #import "MainWindowController.h"
 #import "NppPaths.h"                 // NppConfigDir()/NppConfigSubpath()
 #import <QuartzCore/QuartzCore.h>   // CAGradientLayer (Tahoe window backdrop)
-#import "TahoeToolbarConfig.h"      // Tahoe toolbar group layout (Liquid Glass)
+#import "ToolbarLayout.h"      // Tahoe toolbar group layout (Liquid Glass)
 #import "AppDelegate.h"
 #import "NppBuiltinLanguages.h"
 #import "NppCommandLineParams.h"
@@ -1027,6 +1027,9 @@ static NSToolbarItemIdentifier const kTBGroup10 = @"TB_G10"; // macro
 extern NSString *const kPrefEditorTheme;
 static NSToolbarItemIdentifier const kTBEditorTheme = @"TB_EditorTheme"; // editor light/dark
 static NSToolbarItemIdentifier const kTBWindowOpacity = @"TB_WindowOpacity"; // see-through window
+static NSToolbarItemIdentifier const kTBSectionNext = @"TB_SectionNext";     // large file: next section
+static NSToolbarItemIdentifier const kTBSectionPrev = @"TB_SectionPrev";     // large file: previous section
+static NSToolbarItemIdentifier const kTBSectionGoto = @"TB_SectionGoto";     // large file: go to byte offset
 
 // Default-mode plugin grouping: plugin toolbar buttons are packed into one
 // toolbar item per plugin (grouped by plugin directory). The item identifier is
@@ -1591,7 +1594,7 @@ static const CGFloat kTGLabelGap = 3.0;   // gap between icon row and label
 static const CGFloat kTGLabelH   = 14.0;  // label row height
 static const CGFloat kTGRadius   = 12.0;  // pill corner radius (rounded, mockup-like)
 
-@interface NppTahoeGroupView : NSView
+@interface NppTahoeGroupView : NSView <NppToolbarOverflowMenuProviding>
 - (instancetype)initWithButtons:(NSArray<NSButton *> *)buttons
                           label:(NSString *)label
                    overflowMenu:(nullable NSMenu *)menu;
@@ -1648,6 +1651,11 @@ static const CGFloat kTGRadius   = 12.0;  // pill corner radius (rounded, mockup
     _labelButton.attributedTitle = att;
     [self addSubview:_labelButton];
     return self;
+}
+
+// The capsule's own ▾ menu (nil when it has none); the toolbar's overflow popover lists its items.
+- (NSMenu *)npp_overflowMenu {
+    return _overflowMenu;
 }
 
 - (void)_popOverflow:(id)sender {
@@ -1847,6 +1855,11 @@ static NSArray<NSArray *> *toolbarDescriptors() {
         @[kTBPlayRecord,  @"Playback",   @"Run Macro",                @"playRecord",       @"runMacro:"],
         @[kTBPlayRecordM, @"Run ×N",     @"Run Macro Multiple Times", @"playRecord_m",     @"runMacroMultipleTimes:"],
         @[kTBSaveRecord,  @"Save Mac",   @"Save Current Recorded Macro", @"saveRecord",    @"saveCurrentMacro:"],
+        @[kTBEditorTheme, @"Theme",      @"Switch the editor between light and dark", @"sf:circle.lefthalf.filled", @"toggleEditorThemeFromToolbar:"],
+        @[kTBWindowOpacity, @"Opacity",  @"Window opacity: see through the app while reading", @"sf:eye", @"showWindowOpacityPopover:"],
+        @[kTBSectionNext, @"Next",       @"Next Section (large file)",              @"sf:arrow.down.to.line", @"nextSection:"],
+        @[kTBSectionPrev, @"Previous",   @"Previous Section (large file)",          @"sf:arrow.up.to.line",   @"previousSection:"],
+        @[kTBSectionGoto, @"Go to",      @"Go to Byte Offset (large file)",         @"sf:number",             @"goToSectionOffset:"],
     ];
 }
 
@@ -1886,6 +1899,8 @@ static NSArray<NSArray *> *tahoeToolbarGroups(void) {
         @[@"File",    @[kTBNew, kTBOpen, kTBSave, kTBPrint],  @[kTBSaveAll, kTBClose, kTBCloseAll]],
         @[@"Edit",    @[kTBCopy, kTBPaste, kTBUndo, kTBRedo], @[kTBCut]],
         @[@"Find",    @[kTBFind],                             @[kTBFindRep]],
+        @[@"Look",    @[kTBEditorTheme, kTBWindowOpacity],    @[]],
+        @[@"Large",   @[kTBSectionNext, kTBSectionPrev, kTBSectionGoto], @[]],
         @[@"Zoom",    @[kTBZoomIn, kTBZoomOut],               @[]],
         @[@"View",    @[kTBWrap, kTBIndentGuide],             @[kTBAllChars]],
         @[@"Sync",    @[kTBSyncV],                            @[kTBSyncH]],
@@ -2102,8 +2117,8 @@ static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
 
     // Tahoe profile: effective toolbar group layout (built-in + plugins groups),
     // loaded from toolbarButtonsTahoeConf.xml (or materialized from defaults).
-    // See TahoeToolbarConfig. Array of @{label,kind,primary,overflow,hidden}.
-    NSArray<NSDictionary *> *_tahoeModel;
+    // See ToolbarLayout. Array of @{label,kind,primary,overflow,hidden}.
+    NSArray<NSDictionary *> *_layoutModel;
 
     // View display modes
     BOOL              _postItMode;
@@ -2421,6 +2436,7 @@ static const double kMinWindowOpacity = 0.3;
     for (NSString *ident in [self toolbarDefaultItemIdentifiers:nil]) {
         NSToolbarItem *item = nil;
         if ([ident isEqualToString:NSToolbarSeparatorItemIdentifier] ||
+            [ident isEqualToString:NSToolbarSpaceItemIdentifier] ||   // Tahoe gap between groups
             [ident isEqualToString:NSToolbarFlexibleSpaceItemIdentifier]) {
             item = [[NSToolbarItem alloc] initWithItemIdentifier:ident];
         } else {
@@ -2461,18 +2477,13 @@ static void NppCollectControls(NSView *root, NSMutableArray<NSControl *> *out) {
 
 // One API for the toolbar's visibility: the Classic row or the Tahoe NSToolbar.
 - (BOOL)isToolbarShown {
-    if (_contentToolbar) return !_contentToolbar.hidden;
-    return self.window.toolbar ? self.window.toolbar.visible : NO;
+    return _contentToolbar ? !_contentToolbar.hidden : NO;
 }
 
 - (void)setToolbarShown:(BOOL)shown {
-    if (_contentToolbar) {
-        _contentToolbar.hidden = !shown;
-        _contentToolbarHeight.constant = shown ? 34.0 : 0.0;
-        return;
-    }
-    if (self.window.toolbar && self.window.toolbar.visible != shown)
-        [self.window toggleToolbarShown:nil];
+    if (!_contentToolbar) return;
+    _contentToolbar.hidden = !shown;
+    _contentToolbarHeight.constant = shown ? ([NppThemeManager shared].usesGlassMaterials ? 60.0 : 34.0) : 0.0;
 }
 
 - (void)toggleToolbarShown:(id)sender {
@@ -2484,47 +2495,12 @@ static void NppCollectControls(NSView *root, NSMutableArray<NSControl *> *out) {
     _toolbarConfig = _parseToolbarConfig();
     // Tahoe profile: load (or materialize) the group layout from
     // toolbarButtonsTahoeConf.xml before the toolbar delegate is queried.
-    if ([self _toolbarUsesTahoe]) [self _loadTahoeToolbarModel];
+    [self _loadLayoutModel];
 
-    // Classic: the toolbar is a row in the content area (see buildContentView), not the
-    // title-bar NSToolbar. Tahoe keeps NSToolbar for now.
-    if (![self _toolbarUsesTahoe]) return;
-
-    NSToolbar *tb = [[NSToolbar alloc] initWithIdentifier:@"NppToolbar"];
-    tb.delegate = self;
-    tb.allowsUserCustomization = NO;
-    // Icon-only for both profiles: Classic packs buttons into one custom-view item
-    // per group; the Tahoe profile uses custom NppTahoeGroupView capsules that draw
-    // their OWN labels (and label-dropdowns). Either way there are no system labels.
-    tb.displayMode = NSToolbarDisplayModeIconOnly;
-    // Issue #26: each NSToolbarItem in our setup wraps a multi-button custom
-    // view, not a single labelled button — so there's no per-item label to
-    // render in "Icon and Text" mode. Hide the display-mode picker from the
-    // toolbar's right-click context menu so users can't pick a mode that
-    // would only render empty space below the icons. See
-    // docs/issue-26-toolbar-icon-and-text.md for the full analysis. Will be
-    // re-enabled when toolbar is refactored to one NSToolbarItem per button.
-    // Issue #114 — `allowsDisplayModeCustomization` was actually added in
-    // macOS 15 Sequoia (not 13, as the original commit message claimed). On
-    // macOS 13/14 the runtime selector doesn't exist, and the bad @available
-    // gate triggered an unrecognized-selector exception during init that
-    // partially destroyed the window setup and made File > New fall through
-    // to NSDocumentController. Gate set to the correct minimum below.
-    if (@available(macOS 15.0, *)) {
-        // Set by name: the property only exists in the macOS 15 SDK, so a direct
-        // assignment fails to compile on older build machines (CI runs macos-14).
-        if ([tb respondsToSelector:NSSelectorFromString(@"setAllowsDisplayModeCustomization:")])
-            [tb setValue:@NO forKey:@"allowsDisplayModeCustomization"];
-    }
-    self.window.toolbar = tb;
-    self.window.toolbar.visible = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefToolbarVisible];
-    // Expanded style keeps the toolbar in its OWN row below the title bar for
-    // BOTH profiles — matching the Classic layout and the Tahoe mockup. (Unified
-    // crammed the icons into the title row, so we don't use it.) For Tahoe we make
-    // the titlebar transparent so the opaque chrome strip behind the pill groups
-    // drops away and each pill reads as a separate floating element.
+    // Both profiles draw the toolbar as a row in the content area (see buildContentView),
+    // below the menu bar. Tahoe's capsules are NSToolbar-free views in that row, so the
+    // menus stay above the icons in both profiles.
     if (@available(macOS 11.0, *)) {
-        self.window.toolbarStyle = NSWindowToolbarStyleExpanded;
         self.window.titlebarAppearsTransparent = [NppThemeManager shared].usesGlassMaterials;
     }
 }
@@ -3042,8 +3018,6 @@ static NSImage *_loadPluginIconFromDirs(NSArray<NSString *> *dirs, NSString *fil
 - (void)_refreshPluginToolbarIcons {
     if (!_pluginToolbarItems.count) return;
 
-    NSToolbar *toolbar = self.window.toolbar;
-
     // Re-resolve every plugin icon for the current appearance. The resolver also
     // re-applies the toolbar colorization prefs, so this covers both the
     // dark/light flip and the "colorize plugin icons" preference change.
@@ -3054,36 +3028,8 @@ static NSImage *_loadPluginIconFromDirs(NSArray<NSString *> *dirs, NSString *fil
         if (newIcon) pti[@"icon"] = newIcon;
     }
 
-    // cmdID → freshly-resolved icon, for updating the live buttons below.
-    NSMutableDictionary<NSNumber *, NSImage *> *iconByCmd = [NSMutableDictionary dictionary];
-    for (NSDictionary *pti in _pluginToolbarItems)
-        if (pti[@"icon"]) iconByCmd[pti[@"cmdID"]] = pti[@"icon"];
-
-    // Update live buttons. A plugin button lives either as a plugin item's view
-    // directly (user-config mode: "TB_Plugin_<cmdID>") or as a subview of a
-    // plugin-group container (default mode). Both carry btn.tag == cmdID. Items
-    // collapsed into the overflow chevron aren't in -items; their cached icon is
-    // picked up on the next layout pass via the builders.
-    for (NSToolbarItem *item in toolbar.items) {
-        NSString *ident = item.itemIdentifier;
-        if (!([ident hasPrefix:kTBPluginSegPrefix] ||
-              [ident hasPrefix:kTBPluginGroupPrefix] || [ident hasPrefix:@"TB_Plugin_"]))
-            continue;
-
-        NSMutableArray<NSButton *> *buttons = [NSMutableArray array];
-        if ([item.view isKindOfClass:[NSButton class]]) {
-            [buttons addObject:(NSButton *)item.view];
-        } else {
-            for (NSView *sub in item.view.subviews)
-                if ([sub isKindOfClass:[NSButton class]]) [buttons addObject:(NSButton *)sub];
-        }
-        for (NSButton *btn in buttons) {
-            NSImage *icon = iconByCmd[@(btn.tag)];
-            if (!icon) continue;
-            icon.size = NSMakeSize(nppIconSize(), nppIconSize());
-            btn.image = icon;
-        }
-    }
+    // The row is rebuilt so every button picks up its freshly-resolved icon.
+    if (_contentToolbar) [self _rebuildContentToolbarItems];
 }
 
 - (NSToolbarItem *)makePluginToolbarItem:(NSDictionary *)pti {
@@ -3134,6 +3080,8 @@ static NSImage *_loadPluginIconFromDirs(NSArray<NSString *> *dirs, NSString *fil
 }
 
 static NSToolbarItemIdentifier const kTBUserConfig = @"TB_UserConfig";
+// Classic layout: one row item per group (so the » overflow can hide whole groups).
+static NSString *const kTBRowGroupPrefix = @"TB_RowGroup:";
 
 // YES when the toolbar should render the Tahoe (Liquid Glass) profile. Read at
 // toolbar-build time; resolved by NppThemeManager.effectiveAppearanceStyle
@@ -3150,7 +3098,7 @@ static NSToolbarItemIdentifier const kTBUserConfig = @"TB_UserConfig";
 #pragma mark - Tahoe toolbar group model (Liquid Glass)
 
 // Convert the static default group table (array-of-arrays) into the dict-form
-// model TahoeToolbarConfig uses (kind=builtin). The id literals live ONLY in
+// model ToolbarLayout uses (kind=builtin). The id literals live ONLY in
 // tahoeToolbarGroups() — this is the single source, reshaped for the config layer.
 static NSArray<NSDictionary *> *_tahoeDefaultBuiltinGroupDicts(void) {
     NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
@@ -3199,35 +3147,64 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
 
 // The plugins group dict in the current model (or nil).
 - (NSDictionary *)_tahoePluginsGroup {
-    for (NSDictionary *g in _tahoeModel)
+    for (NSDictionary *g in _layoutModel)
         if ([g[@"kind"] isEqualToString:@"plugins"]) return g;
     return nil;
 }
 
 // Load (or materialize) the Tahoe group model + publish the catalog the
 // Preferences editor reads. Called from buildToolbar (Tahoe only).
-- (void)_loadTahoeToolbarModel {
+- (void)_loadLayoutModel {
     // Publish defaults + display names for the editor (single source of truth).
-    [TahoeToolbarConfig setDefaultBuiltinGroups:_tahoeDefaultBuiltinGroupDicts()];
-    [TahoeToolbarConfig setButtonDisplayNames:_tahoeButtonDisplayNames()];
+    [ToolbarLayout setDefaultBuiltinGroups:_tahoeDefaultBuiltinGroupDicts()];
+    [ToolbarLayout setButtonDisplayNames:_tahoeButtonDisplayNames()];
 
-    NSArray<NSDictionary *> *model = [TahoeToolbarConfig load];
+    NSArray<NSDictionary *> *model = [ToolbarLayout load];
     if (!model) {
-        // First Tahoe use (or after Reset): defaults + current plugins, persisted.
+        // First use (or after Reset): defaults + current plugins, persisted.
         NSMutableArray *m = [_tahoeDefaultBuiltinGroupDicts() mutableCopy];
         [m addObject:[self _tahoeDefaultPluginsGroupDict]];
         model = m;
-        [TahoeToolbarConfig saveModel:model];
+        [ToolbarLayout saveModel:model];
+    } else {
+        // A newer version may add built-in groups (e.g. "Look", "Large"): add each one the
+        // file lacks, right after the default group that comes before it, so the file
+        // keeps the default order.
+        NSMutableArray *m = [model mutableCopy];
+        BOOL added = NO;
+        NSString *previous = nil;
+        for (NSDictionary *def in _tahoeDefaultBuiltinGroupDicts()) {
+            NSString *label = def[@"label"];
+            NSUInteger at = [m indexOfObjectPassingTest:^BOOL(NSDictionary *g, NSUInteger i, BOOL *stop) {
+                return [g[@"label"] isEqualToString:label];
+            }];
+            if (at == NSNotFound) {
+                NSUInteger after = 0;   // no predecessor found: first position
+                if (previous) {
+                    NSUInteger prevAt = [m indexOfObjectPassingTest:^BOOL(NSDictionary *g, NSUInteger i, BOOL *stop) {
+                        return [g[@"label"] isEqualToString:previous];
+                    }];
+                    if (prevAt != NSNotFound) after = prevAt + 1;
+                }
+                [m insertObject:def atIndex:after];
+                added = YES;
+            }
+            previous = label;
+        }
+        if (added) {
+            model = m;
+            [ToolbarLayout saveModel:model];
+        }
     }
-    _tahoeModel = model;
+    _layoutModel = model;
 }
 
 // Append newly-registered plugin command names (to the Plugins overflow) that
 // aren't already classified; missing plugins are kept-but-skipped. Persists +
 // returns YES if the model changed.
 - (BOOL)_reconcileTahoePluginsIfNeeded {
-    if (!_tahoeModel) return NO;
-    NSMutableArray<NSDictionary *> *model = [_tahoeModel mutableCopy];
+    if (!_layoutModel) return NO;
+    NSMutableArray<NSDictionary *> *model = [_layoutModel mutableCopy];
     NSInteger idx = -1;
     NSMutableDictionary *plug = nil;
     for (NSInteger i = 0; i < (NSInteger)model.count; i++)
@@ -3267,23 +3244,24 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
     if (!changed) return NO;
 
     if (idx >= 0) model[idx] = plug; else [model addObject:plug];
-    _tahoeModel = model;
-    [TahoeToolbarConfig saveModel:model];
+    _layoutModel = model;
+    [ToolbarLayout saveModel:model];
     return YES;
 }
 
-// Tahoe profile: one capsule group per built-in cluster (from _tahoeModel),
+// Tahoe profile: one capsule group per built-in cluster (from _layoutModel),
 // then the "Plugins" capsule (if any plugins have registered), flexible space, and
 // the tab controls.
 - (NSArray<NSToolbarItemIdentifier> *)_tahoeDefaultItemIdentifiers:(NSToolbar *)tb {
-    if (!_tahoeModel) [self _loadTahoeToolbarModel];
+    if (!_layoutModel) [self _loadLayoutModel];
     NSMutableArray<NSToolbarItemIdentifier> *ids = [NSMutableArray array];
     // A system Space item BETWEEN each group breaks the macOS-26 auto-grouping that
     // otherwise wraps all adjacent items in one enclosing glass bar, so each pill
     // stands alone (and the space provides the visible gap between pills).
     BOOL first = YES;
-    for (NSDictionary *g in _tahoeModel) {
+    for (NSDictionary *g in _layoutModel) {
         if (![g[@"kind"] isEqualToString:@"builtin"]) continue;
+        if (!layoutGroupVisible(g)) continue;   // group switched off in the editor
         // Skip a group whose buttons are all hidden (nothing to show).
         if (((NSArray *)g[@"primary"]).count == 0 && ((NSArray *)g[@"overflow"]).count == 0)
             continue;
@@ -3291,7 +3269,8 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
         first = NO;
         [ids addObject:[kTBTahoeGroupPrefix stringByAppendingString:g[@"label"]]];
     }
-    if (_pluginToolbarItems.count > 0) {
+    NSDictionary *plugGroup = [self _tahoePluginsGroup];
+    if (_pluginToolbarItems.count > 0 && layoutGroupVisible(plugGroup)) {
         [ids addObject:NSToolbarSpaceItemIdentifier];
         [ids addObject:kTBTahoePluginsGroup];
     }
@@ -3300,29 +3279,25 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
     return ids;
 }
 
-// Classic profile (current default): today's group layout.
+// Classic profile: one row built from the layout model (or the legacy toolbarButtonsConf.xml
+// when that file is active), then the Classic-only controls, flexible space and tab controls.
 - (NSArray<NSToolbarItemIdentifier> *)_classicDefaultItemIdentifiers:(NSToolbar *)tb {
-    // When user has a custom toolbar config, use a single dynamic item
-    // containing all standard + plugin buttons in XML order
+    NSMutableArray<NSToolbarItemIdentifier> *ids = [NSMutableArray array];
     if ([_toolbarConfig[@"hasUserConfig"] boolValue]) {
-        return @[kTBUserConfig,
-                 NSToolbarFlexibleSpaceItemIdentifier,
-                 kTBTabControls];
+        [ids addObject:kTBUserConfig];        // legacy XML: one item, as before
+    } else {
+        // Model mode: one item per group, a separator between groups.
+        NSString *prev = nil;
+        for (NSDictionary *e in [self _classicRowEntries]) {
+            NSString *group = e[@"group"];
+            if (!group.length || [group isEqualToString:prev]) continue;
+            if (prev) [ids addObject:NSToolbarSeparatorItemIdentifier];
+            [ids addObject:[kTBRowGroupPrefix stringByAppendingString:group]];
+            prev = group;
+        }
     }
-    return @[kTBGroup1,
-             kTBGroup2,
-             kTBGroup3,
-             kTBGroup4,
-             kTBGroup5,
-             kTBGroup6,   // scroll sync
-             kTBGroup7,   // view toggles (wrap, allchars, indent guide)
-             kTBGroup8,   // panels
-             kTBGroup9,   // monitoring
-             kTBGroup10,  // macro (no trailing separator)
-             kTBEditorTheme,
-             kTBWindowOpacity,
-             NSToolbarFlexibleSpaceItemIdentifier,
-             kTBTabControls];
+    [ids addObjectsFromArray:@[NSToolbarFlexibleSpaceItemIdentifier, kTBTabControls]];
+    return ids;
 }
 
 - (NSArray<NSToolbarItemIdentifier> *)toolbarAllowedItemIdentifiers:(NSToolbar *)tb {
@@ -3352,8 +3327,8 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
         return [self makeTahoePluginGroupToolbarItem:ident];
     if ([ident hasPrefix:kTBTahoeGroupPrefix]) {
         NSString *label = [ident substringFromIndex:kTBTahoeGroupPrefix.length];
-        if (!_tahoeModel) [self _loadTahoeToolbarModel];
-        for (NSDictionary *g in _tahoeModel)
+        if (!_layoutModel) [self _loadLayoutModel];
+        for (NSDictionary *g in _layoutModel)
             if ([g[@"kind"] isEqualToString:@"builtin"] && [g[@"label"] isEqualToString:label])
                 return [self makeTahoeGroupToolbarItem:ident label:label
                                                primary:g[@"primary"] overflow:g[@"overflow"]];
@@ -3368,6 +3343,16 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
 // the label carries a ▾ that pops a menu of the hidden items. Custom-drawn so the
 // dropdown lives on the label (no separate ellipsis button). Respects the
 // toolbar-config hidden-button set.
+/// Overflow form of a Tahoe group: when the toolbar overflows, macOS shows the group as
+/// one menu item, so its buttons go in a submenu and stay usable.
+static NSMenuItem *NppGroupOverflowForm(NSString *title, NSArray<NSMenuItem *> *children) {
+    NSMenu *sub = [[NSMenu alloc] initWithTitle:title];
+    for (NSMenuItem *child in children) [sub addItem:child];
+    NSMenuItem *form = [[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
+    form.submenu = sub;
+    return form;
+}
+
 - (NSToolbarItem *)makeTahoeGroupToolbarItem:(NSString *)groupIdent
                                        label:(NSString *)groupLabel
                                      primary:(NSArray *)primaryIds
@@ -3422,6 +3407,20 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
     item.paletteLabel = groupLabel;
     item.minSize      = gv.frame.size;
     item.maxSize      = gv.frame.size;
+
+    NSMutableArray<NSMenuItem *> *children = [NSMutableArray array];
+    for (NSString *btnId in [primaryIds arrayByAddingObjectsFromArray:overflowIds]) {
+        if ([hiddenIDs containsObject:btnId]) continue;
+        NSArray *desc = descMap[btnId];
+        if (!desc) continue;
+        NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:desc[2]
+                                                    action:NSSelectorFromString(desc[4]) keyEquivalent:@""];
+        mi.target = self;
+        NSImage *mIcon = nppToolbarIcon(desc[3]);
+        if (mIcon) { mIcon = [mIcon copy]; mIcon.size = NSMakeSize(16, 16); mi.image = mIcon; }
+        [children addObject:mi];
+    }
+    item.menuFormRepresentation = NppGroupOverflowForm(groupLabel, children);
     return item;
 }
 
@@ -3435,7 +3434,7 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
     // Classification comes from the Tahoe config's "Plugins" group (user-editable
     // in Preferences ▸ Toolbar). Reconcile first so any newly-registered plugins
     // are recorded (landing in overflow) before we read the split.
-    if (!_tahoeModel) [self _loadTahoeToolbarModel];
+    if (!_layoutModel) [self _loadLayoutModel];
     [self _reconcileTahoePluginsIfNeeded];
     NSDictionary *pg = [self _tahoePluginsGroup];
     NSArray<NSString *> *primNames = pg[@"primary"]  ?: @[];
@@ -3490,6 +3489,18 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
     item.paletteLabel = @"Plugins";
     item.minSize      = gv.frame.size;
     item.maxSize      = gv.frame.size;
+
+    NSMutableArray<NSMenuItem *> *children = [NSMutableArray array];
+    for (NSDictionary *pti in [primary arrayByAddingObjectsFromArray:overflow]) {
+        NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:(pti[@"tooltip"] ?: (pti[@"id"] ?: @""))
+                                                    action:@selector(pluginToolbarAction:) keyEquivalent:@""];
+        mi.target = self;
+        mi.tag    = [pti[@"cmdID"] intValue];
+        NSImage *mIcon = pti[@"icon"];
+        if (mIcon) { mIcon = [mIcon copy]; mIcon.size = NSMakeSize(16, 16); mi.image = mIcon; }
+        [children addObject:mi];
+    }
+    item.menuFormRepresentation = NppGroupOverflowForm(@"Plugins", children);
     return item;
 }
 
@@ -3498,6 +3509,7 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
 // before it) and reinserts both just before the flexible space — the leading
 // Space gives the same inter-pill gap the static groups get.
 - (void)_rebuildTahoePluginsGroup {
+    if (_contentToolbar) { [self _rebuildContentToolbarItems]; return; }
     NSToolbar *tb = self.window.toolbar;
     if (!tb) return;
     for (NSInteger i = (NSInteger)tb.items.count - 1; i >= 0; i--)
@@ -3545,6 +3557,8 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
     // User-configured toolbar: single item with all visible buttons in XML order
     if ([ident isEqualToString:kTBUserConfig])
         return [self makeUserConfigToolbarItem];
+    if ([ident hasPrefix:kTBRowGroupPrefix])
+        return [self makeRowGroupToolbarItem:[ident substringFromIndex:kTBRowGroupPrefix.length]];
 
     // Group 7 gets special handling: Word Wrap + All Chars button + dropdown arrow + Indent Guide.
     if ([ident isEqualToString:kTBGroup7])
@@ -3573,18 +3587,101 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
     return nil;
 }
 
-/// Build a single toolbar item containing all visible buttons from the user's XML config,
-/// in document order, with separator lines at default group boundaries.
+/// Built-in buttons that behave as toggles in the Classic row (their state is kept in
+/// sync by the editor/window). Matches the trigger="toggle" entries of the default XML.
+static NSSet *layoutToggleIdents(void) {
+    return [NSSet setWithObjects:kTBSyncV, kTBSyncH, kTBWrap, kTBAllChars, kTBIndentGuide,
+                                 kTBUDL, kTBDocMap, kTBDocList, kTBFuncList, kTBFileBrowser,
+                                 kTBMonitor, nil];
+}
+
+/// Whether a layout group is shown (a missing "visible" key means shown).
+static BOOL layoutGroupVisible(NSDictionary *g) {
+    return g[@"visible"] ? [g[@"visible"] boolValue] : YES;
+}
+
+/// Ordered entries for the Classic row. Comes from the legacy toolbarButtonsConf.xml
+/// when that file is active, otherwise from the layout model. A built-in entry is
+/// {id, action, name, trigger}; a plugin entry is {plugin, cmdID, name}. Every entry
+/// carries `group` (when known) so the row can draw a separator between groups.
+- (NSArray<NSDictionary *> *)_classicRowEntries {
+    NSMutableArray<NSDictionary *> *entries = [NSMutableArray array];
+
+    if ([_toolbarConfig[@"hasUserConfig"] boolValue]) {
+        for (NSDictionary *b in _toolbarConfig[@"visibleButtons"])
+            [entries addObject:@{ @"id": b[@"id"],
+                                  @"action": b[@"action"] ?: @"",
+                                  @"name": b[@"name"] ?: b[@"id"],
+                                  @"trigger": b[@"trigger"] ?: @"click" }];
+        for (NSDictionary *pb in _toolbarConfig[@"visiblePluginButtons"])
+            [entries addObject:@{ @"plugin": @YES,
+                                  @"cmdID": pb[@"cmdID"],
+                                  @"name": pb[@"name"] ?: @"Plugin",
+                                  @"group": @"legacy-plugins" }];
+        return entries;
+    }
+
+    if (!_layoutModel) [self _loadLayoutModel];
+    [self _reconcileTahoePluginsIfNeeded];
+
+    NSMutableDictionary *descByID = [NSMutableDictionary dictionary];
+    for (NSArray *d in toolbarDescriptors()) descByID[d[0]] = d;
+    NSMutableDictionary *pluginByTip = [NSMutableDictionary dictionary];
+    for (NSDictionary *pti in _pluginToolbarItems) {
+        NSString *tip = pti[@"tooltip"] ?: @"";
+        if (tip.length && !pluginByTip[tip]) pluginByTip[tip] = pti;
+    }
+    NSSet *toggles = layoutToggleIdents();
+
+    for (NSDictionary *g in _layoutModel) {
+        if (!layoutGroupVisible(g)) continue;
+        NSString *label = g[@"label"];
+        BOOL isPlugins = [g[@"kind"] isEqualToString:@"plugins"];
+        NSMutableArray<NSString *> *shown = [NSMutableArray array];
+        [shown addObjectsFromArray:g[@"primary"]  ?: @[]];
+        [shown addObjectsFromArray:g[@"overflow"] ?: @[]];   // Classic has no ▾ menu
+        for (NSString *k in shown) {
+            if (isPlugins) {
+                NSDictionary *pti = pluginByTip[k];
+                if (pti) [entries addObject:@{ @"plugin": @YES, @"cmdID": pti[@"cmdID"],
+                                               @"name": k, @"group": label }];
+            } else {
+                NSArray *desc = descByID[k];
+                if (!desc) continue;
+                [entries addObject:@{ @"id": k, @"action": desc[4], @"name": desc[2],
+                                      @"trigger": [toggles containsObject:k] ? @"toggle" : @"click",
+                                      @"group": label }];
+            }
+        }
+    }
+    return entries;
+}
+
+/// Build the single Classic toolbar item that holds every visible button in layout
+/// order, with a separator line between groups. Entries come from -_classicRowEntries.
 - (NSToolbarItem *)makeUserConfigToolbarItem {
+    return [self _rowItemWithIdentifier:kTBUserConfig entries:[self _classicRowEntries]];
+}
+
+/// The Classic row item for one group of the layout model (see kTBRowGroupPrefix).
+- (NSToolbarItem *)makeRowGroupToolbarItem:(NSString *)group {
+    NSMutableArray<NSDictionary *> *entries = [NSMutableArray array];
+    for (NSDictionary *e in [self _classicRowEntries])
+        if ([e[@"group"] isEqualToString:group]) [entries addObject:e];
+    return [self _rowItemWithIdentifier:[kTBRowGroupPrefix stringByAppendingString:group]
+                                entries:entries];
+}
+
+/// Build one Classic row item holding `entries` in order (see -_classicRowEntries).
+- (NSToolbarItem *)_rowItemWithIdentifier:(NSString *)ident entries:(NSArray<NSDictionary *> *)entries {
     const CGFloat kBtnSize = nppBtnSize();
     const CGFloat kSpacing = nppSpacing();
     const CGFloat kSepGap  = nppSepGap();   // total gap for a separator (padL + 1px line + padR)
 
-    NSArray *visibleButtons = _toolbarConfig[@"visibleButtons"];
-    if (!visibleButtons.count) return nil;
+    if (!entries.count) return nil;
 
-    // Default group membership: which buttons belong to which group (for separator placement).
-    // Buttons at group boundaries get a separator line after the last button of the previous group.
+    // Static default group of each built-in button, used when an entry has no
+    // explicit group (the legacy XML has none).
     static NSDictionary *buttonToGroup = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -3599,6 +3696,11 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
         b2g[kTBIndentGuide] = kTBGroup7;
         buttonToGroup = [b2g copy];
     });
+    // The group an entry belongs to; nil for an ungrouped built-in.
+    NSString *(^groupOf)(NSDictionary *) = ^NSString *(NSDictionary *e) {
+        if (e[@"group"]) return e[@"group"];
+        return e[@"id"] ? buttonToGroup[e[@"id"]] : nil;
+    };
 
     // Build the descriptor lookup (default 32 + any extra)
     NSMutableDictionary *descMap = [NSMutableDictionary dictionary];
@@ -3610,109 +3712,40 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
     // First pass: calculate total width
     NSString *prevGroup = nil;
     CGFloat totalW = 0;
-    NSInteger btnCount = 0;
-    for (NSDictionary *btn in visibleButtons) {
-        NSString *btnId = btn[@"id"];
-        NSString *group = buttonToGroup[btnId];
-        if (prevGroup && group && ![group isEqualToString:prevGroup])
-            totalW += kSepGap;
-        else if (btnCount > 0)
-            totalW += kSpacing;
+    NSInteger count = 0;
+    for (NSDictionary *e in entries) {
+        NSString *group = groupOf(e);
+        if (count > 0)
+            totalW += (prevGroup && group && ![group isEqualToString:prevGroup]) ? kSepGap : kSpacing;
         totalW += kBtnSize;
         prevGroup = group ?: prevGroup;
-        btnCount++;
+        count++;
     }
 
     // Second pass: create buttons
     NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, totalW, kBtnSize)];
     CGFloat x = 0;
     prevGroup = nil;
-    btnCount = 0;
+    count = 0;
 
-    for (NSDictionary *btn in visibleButtons) {
-        NSString *btnId = btn[@"id"];
-        NSString *action = btn[@"action"];
-        NSString *name = btn[@"name"];
-        NSString *trigger = btn[@"trigger"];
-        NSString *group = buttonToGroup[btnId];
+    for (NSDictionary *e in entries) {
+        NSString *group = groupOf(e);
 
-        // Insert separator between groups
-        if (prevGroup && group && ![group isEqualToString:prevGroup]) {
-            CGFloat sepX = x + 3.0;
-            _ToolbarBorderLine *sv = [[_ToolbarBorderLine alloc]
-                initWithFrame:NSMakeRect(sepX, 0, 1, kBtnSize)];
-            [container addSubview:sv];
-            x += kSepGap;
-        } else if (btnCount > 0) {
-            x += kSpacing;
-        }
-
-        // Look up icon: custom icon → default descriptor → system symbol fallback
-        NSArray *desc = descMap[btnId];
-        NSImage *img = _customToolbarIcon(btnId, _toolbarConfig);
-        if (!img && desc) img = nppToolbarIcon(desc[3]);
-        if (!img) img = [NSImage imageWithSystemSymbolName:@"square" accessibilityDescription:name];
-
-        // Determine button type
-        BOOL isToggle = [trigger isEqualToString:@"toggle"];
-        BOOL isDesatToggle = [desatSet containsObject:btnId];
-        BOOL isPanelToggle = [panelSet containsObject:btnId];
-
-        NppToolbarButton *button;
-        if (isToggle || isDesatToggle || isPanelToggle) {
-            NppToggleToolbarButton *tb = [[NppToggleToolbarButton alloc]
-                initWithFrame:NSMakeRect(x, 0, kBtnSize, kBtnSize)];
-            tb.useBlueHighlight = isPanelToggle || (isToggle && !isDesatToggle);
-            button = tb;
-        } else {
-            button = [[NppToolbarButton alloc]
-                initWithFrame:NSMakeRect(x, 0, kBtnSize, kBtnSize)];
-        }
-        button.image = img;
-        button.toolTip = name;
-        button.identifier = desc ? desc[3] : btnId; // icon name for dark mode refresh
-
-        // Set action: use the descriptor's action if available, otherwise use the XML action
-        SEL sel = NSSelectorFromString(desc ? desc[4] : action);
-        button.action = sel;
-        button.target = self;
-
-        [container addSubview:button];
-
-        // Store toggle button references for state refresh
-        if ([btnId isEqualToString:kTBWrap])         _tbWrap = (NppToggleToolbarButton *)button;
-        else if ([btnId isEqualToString:kTBSyncV])   _tbSyncV = (NppToggleToolbarButton *)button;
-        else if ([btnId isEqualToString:kTBSyncH])   _tbSyncH = (NppToggleToolbarButton *)button;
-        else if ([btnId isEqualToString:kTBMonitor])  _tbMonitor = (NppToggleToolbarButton *)button;
-        else if ([btnId isEqualToString:kTBUDL])      _tbUDL = (NppToggleToolbarButton *)button;
-        else if ([btnId isEqualToString:kTBDocMap])   _tbDocMap = (NppToggleToolbarButton *)button;
-        else if ([btnId isEqualToString:kTBDocList])  _tbDocList = (NppToggleToolbarButton *)button;
-        else if ([btnId isEqualToString:kTBFuncList]) _tbFuncList = (NppToggleToolbarButton *)button;
-        else if ([btnId isEqualToString:kTBFileBrowser]) _tbFileBrowser = (NppToggleToolbarButton *)button;
-        else if ([btnId isEqualToString:kTBIndentGuide]) _tbIndentGuide = (NppToggleToolbarButton *)button;
-
-        x += kBtnSize;
-        prevGroup = group ?: prevGroup;
-        btnCount++;
-    }
-
-    // ── Append visible plugin buttons (from <Plugin> section) ────────────────
-    NSArray *visPlugins = _toolbarConfig[@"visiblePluginButtons"];
-    if (visPlugins.count) {
-        // Separator before plugin section
-        if (btnCount > 0) {
-            CGFloat sepX = x + 3.0;
-            _ToolbarBorderLine *sv = [[_ToolbarBorderLine alloc]
-                initWithFrame:NSMakeRect(sepX, 0, 1, kBtnSize)];
-            [container addSubview:sv];
-            x += kSepGap;
-        }
-        for (NSDictionary *pb in visPlugins) {
-            if (btnCount > 0 && pb != visPlugins[0])
+        // Separator between groups, spacing within one
+        if (count > 0) {
+            if (prevGroup && group && ![group isEqualToString:prevGroup]) {
+                _ToolbarBorderLine *sv = [[_ToolbarBorderLine alloc]
+                    initWithFrame:NSMakeRect(x + 3.0, 0, 1, kBtnSize)];
+                [container addSubview:sv];
+                x += kSepGap;
+            } else {
                 x += kSpacing;
+            }
+        }
 
-            int cmdID = [pb[@"cmdID"] intValue];
-            NSString *pName = pb[@"name"];
+        if (e[@"plugin"]) {
+            int cmdID = [e[@"cmdID"] intValue];
+            NSString *pName = e[@"name"];
 
             // Try to find icon from plugin's registered toolbar items
             NSImage *pImg = nil;
@@ -3722,10 +3755,9 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
                     break;
                 }
             }
-            // Try custom icon by plugin cmdID
+            // Try custom icon by plugin cmdID, then the generic plugin symbol
             if (!pImg) pImg = _customToolbarIcon(
                 [NSString stringWithFormat:@"Plugin_%d", cmdID], _toolbarConfig);
-            // Fallback
             if (!pImg) pImg = [NSImage imageWithSystemSymbolName:@"puzzlepiece"
                                         accessibilityDescription:pName];
 
@@ -3737,10 +3769,59 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
             pBtn.target = self;
             pBtn.action = @selector(pluginToolbarAction:);
             [container addSubview:pBtn];
+        } else {
+            NSString *btnId = e[@"id"];
+            NSString *action = e[@"action"];
+            NSString *name = e[@"name"];
+            NSString *trigger = e[@"trigger"];
 
-            x += kBtnSize;
-            btnCount++;
+            // Look up icon: custom icon → default descriptor → system symbol fallback
+            NSArray *desc = descMap[btnId];
+            NSImage *img = _customToolbarIcon(btnId, _toolbarConfig);
+            if (!img && desc) img = nppToolbarIcon(desc[3]);
+            if (!img) img = [NSImage imageWithSystemSymbolName:@"square" accessibilityDescription:name];
+
+            // Determine button type
+            BOOL isToggle = [trigger isEqualToString:@"toggle"];
+            BOOL isDesatToggle = [desatSet containsObject:btnId];
+            BOOL isPanelToggle = [panelSet containsObject:btnId];
+            NppToolbarButton *button;
+            if (isToggle || isDesatToggle || isPanelToggle) {
+                NppToggleToolbarButton *tb = [[NppToggleToolbarButton alloc]
+                    initWithFrame:NSMakeRect(x, 0, kBtnSize, kBtnSize)];
+                tb.useBlueHighlight = isPanelToggle || (isToggle && !isDesatToggle);
+                button = tb;
+            } else {
+                button = [[NppToolbarButton alloc]
+                    initWithFrame:NSMakeRect(x, 0, kBtnSize, kBtnSize)];
+            }
+            button.image = img;
+            button.toolTip = name;
+            button.identifier = desc ? desc[3] : btnId; // icon name for dark mode refresh
+
+            // Action: the descriptor's action if available, otherwise the entry's
+            SEL sel = NSSelectorFromString(desc ? desc[4] : action);
+            button.action = sel;
+            button.target = self;
+
+            [container addSubview:button];
+
+            // Store toggle button references for state refresh
+            if ([btnId isEqualToString:kTBWrap])         _tbWrap = (NppToggleToolbarButton *)button;
+            else if ([btnId isEqualToString:kTBSyncV])   _tbSyncV = (NppToggleToolbarButton *)button;
+            else if ([btnId isEqualToString:kTBSyncH])   _tbSyncH = (NppToggleToolbarButton *)button;
+            else if ([btnId isEqualToString:kTBMonitor])  _tbMonitor = (NppToggleToolbarButton *)button;
+            else if ([btnId isEqualToString:kTBUDL])      _tbUDL = (NppToggleToolbarButton *)button;
+            else if ([btnId isEqualToString:kTBDocMap])   _tbDocMap = (NppToggleToolbarButton *)button;
+            else if ([btnId isEqualToString:kTBDocList])  _tbDocList = (NppToggleToolbarButton *)button;
+            else if ([btnId isEqualToString:kTBFuncList]) _tbFuncList = (NppToggleToolbarButton *)button;
+            else if ([btnId isEqualToString:kTBFileBrowser]) _tbFileBrowser = (NppToggleToolbarButton *)button;
+            else if ([btnId isEqualToString:kTBIndentGuide]) _tbIndentGuide = (NppToggleToolbarButton *)button;
         }
+
+        x += kBtnSize;
+        prevGroup = group ?: prevGroup;
+        count++;
     }
 
     // Resize container to fit all buttons
@@ -3748,7 +3829,7 @@ static NSDictionary<NSString *, NSString *> *_tahoeButtonDisplayNames(void) {
     cf.size.width = x;
     container.frame = cf;
 
-    NSToolbarItem *item = [[NSToolbarItem alloc] initWithItemIdentifier:kTBUserConfig];
+    NSToolbarItem *item = [[NSToolbarItem alloc] initWithItemIdentifier:ident];
     item.view = container;
     item.minSize = NSMakeSize(x, kBtnSize);
     item.maxSize = NSMakeSize(x, kBtnSize);
@@ -3971,6 +4052,9 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     // buttons read plain, like on Sequoia. Gated; no effect under Classic.
     if ([NppThemeManager shared].usesGlassMaterials)
         item.bordered = NO;
+    // Keep new/close tab visible when the Tahoe toolbar overflows: the system hides
+    // standard-priority items first, and this custom view has no menu form in ».
+    item.visibilityPriority = NSToolbarItemVisibilityPriorityHigh;
     return item;
 }
 
@@ -4347,8 +4431,8 @@ static BOOL groupHasTrailingSep(NSString *ident) {
                name:@"NPPToolbarColorChanged" object:nil];
     // Tahoe toolbar group layout edited in Preferences → rebuild the toolbar.
     [[NSNotificationCenter defaultCenter]
-        addObserver:self selector:@selector(_tahoeToolbarConfigChanged:)
-               name:NPPTahoeToolbarConfigChanged object:nil];
+        addObserver:self selector:@selector(_toolbarLayoutChanged:)
+               name:NPPToolbarLayoutChanged object:nil];
     // Phase 2: one observer refreshes every open PanelFrame title, so
     // each individual panel no longer needs its own NPPLocalizationChanged
     // subscriber for the title.
@@ -4491,9 +4575,10 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         [_inWindowMenuBar.heightAnchor constraintEqualToConstant:24.0],
     ]];
 
-    if (!_tahoeGlass) {
+    {
         _contentToolbar = [[NppContentToolbar alloc] init];
         _contentToolbar.translatesAutoresizingMaskIntoConstraints = NO;
+        _contentToolbar.pinnedItemIdentifiers = [NSSet setWithObject:kTBTabControls];   // new/close tab stay visible
         [_contentToolbar setToolbarItems:[self _buildClassicToolbarItems]];
         [content addSubview:_contentToolbar];
         [self _refreshContentToolbarEnabled];
@@ -4503,12 +4588,13 @@ static BOOL groupHasTrailingSep(NSString *ident) {
                                        selector:@selector(_refreshContentToolbarEnabled)
                                        userInfo:nil repeats:YES];
         BOOL shown = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefToolbarVisible];
-        _contentToolbarHeight = [_contentToolbar.heightAnchor constraintEqualToConstant:(shown ? 34.0 : 0.0)];
+        CGFloat rowHeight = _tahoeGlass ? 60.0 : 34.0;
+        _contentToolbarHeight = [_contentToolbar.heightAnchor constraintEqualToConstant:(shown ? rowHeight : 0.0)];
         _contentToolbar.hidden = !shown;
         [NSLayoutConstraint activateConstraints:@[
             [_contentToolbar.topAnchor constraintEqualToAnchor:_inWindowMenuBar.bottomAnchor],
-            [_contentToolbar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
-            [_contentToolbar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+            [_contentToolbar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:edgeInset],
+            [_contentToolbar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-edgeInset],
             _contentToolbarHeight,
         ]];
     }
@@ -4517,7 +4603,7 @@ static BOOL groupHasTrailingSep(NSString *ident) {
         // Search split view fills from top to incremental search bar. In Tahoe the
         // content view spans the whole window (FullSizeContentView), so pin the top
         // to contentLayoutGuide (below the titlebar+toolbar) instead of content.top.
-        [_searchSplitView.topAnchor constraintEqualToAnchor:(_tahoeGlass ? _inWindowMenuBar.bottomAnchor : _contentToolbar.bottomAnchor) constant:topInset],
+        [_searchSplitView.topAnchor constraintEqualToAnchor:_contentToolbar.bottomAnchor constant:topInset],
         [_searchSplitView.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:edgeInset],
         [_searchSplitView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-edgeInset],
         [_searchSplitView.bottomAnchor constraintEqualToAnchor:_incSearchBar.topAnchor constant:(_tahoeGlass ? -6.0 : 0.0)],
@@ -11036,10 +11122,7 @@ static BOOL _writeCLIScript(NSString *script, NSString *path, NSError **outErr) 
 // view-toggle buttons, and the plugin icons. Shared by the dark-mode switch and
 // the toolbar-colorization preference change so both re-skin identically.
 - (void)_reskinToolbarIcons {
-    NSToolbar *toolbar = self.window.toolbar;
-    for (NSToolbarItem *item in toolbar.items) {
-        NSView *groupView = item.view;
-        if (!groupView) continue;
+    for (NSView *groupView in _contentToolbar.itemViews) {
         for (NSView *sub in groupView.subviews) {
             if ([sub isKindOfClass:[NSButton class]]) {
                 NSButton *btn = (NSButton *)sub;
@@ -11072,10 +11155,13 @@ static BOOL _writeCLIScript(NSString *script, NSString *path, NSError **outErr) 
 // The Tahoe toolbar group layout was edited in Preferences ▸ Toolbar. Reload the
 // model from the file and rebuild the toolbar (Tahoe profile only — Classic is
 // unaffected, its toolbar is a separate construction).
-- (void)_tahoeToolbarConfigChanged:(NSNotification *)n {
-    if (![self _toolbarUsesTahoe]) return;
-    [self _loadTahoeToolbarModel];   // pick up the editor's saved file
-    [self buildToolbar];             // rebuild capsules from the new model
+- (void)_toolbarLayoutChanged:(NSNotification *)n {
+    [self _loadLayoutModel];   // pick up the editor's saved file
+    if ([self _toolbarUsesTahoe]) {
+        [self buildToolbar];   // rebuild capsules from the new model
+    } else if (_contentToolbar) {
+        [self _rebuildContentToolbarItems];
+    }
 }
 
 // checkForUpdates: moved to AppDelegate

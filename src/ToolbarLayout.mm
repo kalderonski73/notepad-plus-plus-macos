@@ -1,40 +1,49 @@
 //
-//  TahoeToolbarConfig.mm
-//  NP++ (macOS) — Liquid Glass / Tahoe profile
+//  ToolbarLayout.mm
+//  NP++ (macOS) — the single toolbar layout model
 //
-//  See TahoeToolbarConfig.h for the model + rationale.
+//  See ToolbarLayout.h for the model and how each profile reads it.
 //
-
-#import "TahoeToolbarConfig.h"
+#import "ToolbarLayout.h"
 #import "NppPaths.h"
 
-NSString *const NPPTahoeToolbarConfigChanged = @"NPPTahoeToolbarConfigChanged";
+NSString *const NPPToolbarLayoutChanged = @"NPPToolbarLayoutChanged";
 
-// Mirrors nppConfigDir() in MainWindowController.mm (kept local to avoid a header
-// dependency): ~/Library/Application Support/NP++.
-static NSString *_tahoeConfigDir(void) {
+static NSString *const kLayoutFileName  = @"toolbarLayout.xml";
+static NSString *const kLegacyFileName  = @"toolbarButtonsTahoeConf.xml";
+
+static NSString *_layoutConfigDir(void) {
     return NppConfigDir();
 }
 
-static NSString *const kSchemaHeader =
-    @" Tahoe Toolbar Layout (NP++ macOS — Liquid Glass appearance)\n"
-    @"  ============================================================\n"
-    @"  This file is generated and managed by NP++. It is LIVE: it takes\n"
-    @"  effect immediately when the appearance is set to Tahoe (no rename needed,\n"
-    @"  unlike toolbarButtonsConf.xml). Edit it from Preferences ▸ Toolbar, or by\n"
-    @"  hand here. Delete it to restore defaults.\n\n"
-    @"  Each <Group> becomes one toolbar capsule. <Primary> buttons show on the\n"
-    @"  capsule; <Overflow> buttons sit behind the capsule label's ▾ menu; <Hidden>\n"
-    @"  buttons are not shown. Built-in buttons are referenced by id (<Btn id=...>),\n"
-    @"  plugin buttons by their command name (<Btn name=...>). ";
+// Test hook: when set, the layout file lives here (and its legacy sibling beside it),
+// so tests never touch the user's real configuration.
+static NSString *sFilePathOverride = nil;
 
-@implementation TahoeToolbarConfig
+static NSString *const kSchemaHeader =
+    @" Toolbar Layout (NP++ macOS)\n"
+    @"  ==========================\n"
+    @"  This file is generated and managed by NP++. It is LIVE: edits take effect\n"
+    @"  immediately. Edit it from Preferences ▸ Toolbar (Classic) or Preferences ▸\n"
+    @"  Tahoe, or by hand here. Delete it to restore defaults.\n\n"
+    @"  Each <Group> is one block of buttons. visible=\"no\" hides the whole group.\n"
+    @"  Inside a group, <Primary> buttons show on the group, <Overflow> buttons sit\n"
+    @"  behind the group's ▾ menu (Tahoe) or inline after the primary buttons\n"
+    @"  (Classic), and <Hidden> buttons are not shown. Built-in buttons are\n"
+    @"  referenced by id (<Btn id=...>), plugin buttons by command name (<Btn name=...>). ";
+
+@implementation ToolbarLayout
 
 static NSArray<NSDictionary *> *sDefaultBuiltinGroups = nil;
 static NSDictionary<NSString *, NSString *> *sDisplayNames = nil;
 
 + (NSString *)filePath {
-    return [_tahoeConfigDir() stringByAppendingPathComponent:@"toolbarButtonsTahoeConf.xml"];
+    if (sFilePathOverride) return sFilePathOverride;
+    return [_layoutConfigDir() stringByAppendingPathComponent:kLayoutFileName];
+}
+
++ (void)setFilePathOverrideForTesting:(NSString *)path {
+    sFilePathOverride = [path copy];
 }
 
 #pragma mark - Catalog (injected by MainWindowController)
@@ -60,10 +69,8 @@ static NSDictionary<NSString *, NSString *> *sDisplayNames = nil;
 
 #pragma mark - Load
 
-+ (nullable NSArray<NSDictionary *> *)load {
-    NSString *path = [self filePath];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return nil;
-
+/// Parse an XML layout file at `path`. Returns nil if the file cannot be read.
++ (nullable NSArray<NSDictionary *> *)_parseFileAtPath:(NSString *)path {
     NSXMLDocument *doc = [[NSXMLDocument alloc]
         initWithContentsOfURL:[NSURL fileURLWithPath:path] options:0 error:nil];
     if (!doc) return nil;
@@ -79,6 +86,8 @@ static NSDictionary<NSString *, NSString *> *sDisplayNames = nil;
         NSMutableDictionary *g = [NSMutableDictionary dictionary];
         g[@"label"] = label;
         g[@"kind"]  = isPlugins ? @"plugins" : @"builtin";
+        // visible defaults to YES; only an explicit "no" hides the group.
+        g[@"visible"] = @(![[gEl attributeForName:@"visible"].stringValue isEqualToString:@"no"]);
         // "customized" marks that the user has taken over this group's layout, so
         // the host stops re-applying its smart default (used for the Plugins group).
         if ([[gEl attributeForName:@"customized"].stringValue isEqualToString:@"yes"])
@@ -100,6 +109,24 @@ static NSDictionary<NSString *, NSString *> *sDisplayNames = nil;
     return model.count ? model : nil;
 }
 
++ (nullable NSArray<NSDictionary *> *)load {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *path = [self filePath];
+
+    if (![fm fileExistsAtPath:path]) {
+        // One-time migration from the Tahoe-only file (same format, no visible flag).
+        NSString *legacy = [[path stringByDeletingLastPathComponent]
+            stringByAppendingPathComponent:kLegacyFileName];
+        if (![fm fileExistsAtPath:legacy]) return nil;
+        NSArray *migrated = [self _parseFileAtPath:legacy];
+        if (!migrated) return nil;
+        [self saveModel:migrated];
+        [fm moveItemAtPath:legacy toPath:[legacy stringByAppendingString:@".bak"] error:nil];
+        return migrated;
+    }
+    return [self _parseFileAtPath:path];
+}
+
 #pragma mark - Save
 
 + (BOOL)saveModel:(NSArray<NSDictionary *> *)model {
@@ -116,6 +143,8 @@ static NSDictionary<NSString *, NSString *> *sDisplayNames = nil;
         [gEl addAttribute:[NSXMLNode attributeWithName:@"label" stringValue:label]];
         [gEl addAttribute:[NSXMLNode attributeWithName:@"kind"
                                            stringValue:(isPlugins ? @"plugins" : @"builtin")]];
+        if (g[@"visible"] && ![g[@"visible"] boolValue])
+            [gEl addAttribute:[NSXMLNode attributeWithName:@"visible" stringValue:@"no"]];
         if ([g[@"customized"] boolValue])
             [gEl addAttribute:[NSXMLNode attributeWithName:@"customized" stringValue:@"yes"]];
         for (NSString *section in @[@"primary", @"overflow", @"hidden"]) {
@@ -137,9 +166,8 @@ static NSDictionary<NSString *, NSString *> *sDisplayNames = nil;
     doc.characterEncoding = @"UTF-8";
     // Lead with the schema comment (insert before the root element).
     [doc insertChild:[NSXMLNode commentWithStringValue:kSchemaHeader] atIndex:0];
-
     NSData *data = [doc XMLDataWithOptions:NSXMLNodePrettyPrint];
-    NSString *dir = _tahoeConfigDir();
+    NSString *dir = [[self filePath] stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:dir
                               withIntermediateDirectories:YES attributes:nil error:nil];
     return [data writeToFile:[self filePath] atomically:YES];

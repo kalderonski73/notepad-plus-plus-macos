@@ -107,7 +107,7 @@ set(APP_SRCS
     src/NppLangsManager.mm
     src/AppDelegate.mm
     src/MainWindowController.mm
-    src/TahoeToolbarConfig.mm
+    src/ToolbarLayout.mm
     src/EditorView.mm
     src/TabManager.mm
     src/NppTabBar.mm
@@ -513,7 +513,7 @@ option(NPP_BUILD_TESTS "Build the XCTest encoding and save tests" OFF)
 if(NPP_BUILD_TESTS)
     set(NPP_TEST_APP_SRCS ${APP_SRCS})
     list(REMOVE_ITEM NPP_TEST_APP_SRCS src/main.mm)
-    add_library(NppEncodingTests MODULE ${NPP_TEST_APP_SRCS} ${APP_HEADERS} tests/EncodingSaveTests.mm)
+    add_library(NppEncodingTests MODULE ${NPP_TEST_APP_SRCS} ${APP_HEADERS} tests/EncodingSaveTests.mm tests/ToolbarLayoutTests.mm)
     set_target_properties(NppEncodingTests PROPERTIES BUNDLE TRUE BUNDLE_EXTENSION xctest)
     target_include_directories(NppEncodingTests PRIVATE
         $<TARGET_PROPERTY:NotepadPlusPlusMac,INCLUDE_DIRECTORIES>)
@@ -529,6 +529,6 @@ if(NPP_BUILD_TESTS)
     set(NPP_XCTEST_FW "${NPP_XCODE_DEV}/Platforms/MacOSX.platform/Developer/Library/Frameworks")
     target_compile_options(NppEncodingTests PRIVATE "-F${NPP_XCTEST_FW}")
     target_link_options(NppEncodingTests PRIVATE "-F${NPP_XCTEST_FW}")
-    set_source_files_properties(${NPP_TEST_APP_SRCS} tests/EncodingSaveTests.mm PROPERTIES
+    set_source_files_properties(${NPP_TEST_APP_SRCS} tests/EncodingSaveTests.mm tests/ToolbarLayoutTests.mm PROPERTIES
         COMPILE_FLAGS "-fobjc-arc")
 endif()

@@ -4,7 +4,7 @@
 #import "NppLangsManager.h"
 #import "NppThemeManager.h"
 #import "StyleConfiguratorWindowController.h"
-#import "TahoeToolbarConfig.h"
+#import "ToolbarLayout.h"
 
 // Defined in regex/RegexBackendSelect.cxx — selects the Boost.Regex backend over
 // the default per-line std::regex one. Mirrored from kPrefUseBoostRegex.
@@ -164,8 +164,10 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
     NSScrollView         *_contentScroll;
     NSView               *_contentArea;
     // Tahoe toolbar group editor (Toolbar page, gated on the Tahoe appearance).
-    NSOutlineView        *_tahoeOutline;
-    NSMutableArray       *_tahoeEditGroups; // [ @{label,kind,items:[ @{key,display,state} ]} ]
+    NSHashTable<NSOutlineView *> *_layoutOutlines; // every editor outline (Toolbar + Tahoe pages)
+    NSHashTable<NSButton *> *_tahoeModeBoxes;      // every "Tahoe mode" checkbox (kept in sync)
+    NSHashTable<NSTextField *> *_tahoeModeNotes;   // restart notes under those checkboxes
+    NSMutableArray       *_tahoeEditGroups; // [ @{label,kind,visible,items:[ @{key,display,state} ]} ]
     NSMutableArray       *_pageNames;     // sidebar row titles (NSString or @"-" for separator)
     NSMutableDictionary  *_pageViews;     // pageTitle → NSView (lazy cache)
     NSPopUpButton        *_languagePopup; // General page — language selector
@@ -942,6 +944,14 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
     hideBtn.state = ![ud boolForKey:kPrefToolbarVisible] ? NSControlStateValueOn : NSControlStateValueOff;
     [v addSubview:hideBtn];
 
+    // Shared toolbar layout editor (the same editor the Tahoe page hosts).
+    y -= 40;
+    [self _addLayoutEditorToView:v top:y title:@"Toolbar Layout"
+        help:@"Choose where each button appears: on the toolbar (Toolbar), in the Overflow "
+             @"menu, or Hidden. In Classic, Overflow buttons appear inline after the Toolbar "
+             @"buttons. Turn a group off to hide it. Drag a button, or use Move Up and Move Down, "
+             @"to reorder it within its group."];
+
     // Disable all options above if the toolbar is currently hidden.
     [self _updateToolbarPageControlsEnabledState:v hidden:![ud boolForKey:kPrefToolbarVisible]];
 
@@ -952,40 +962,265 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
 
 // A dedicated "Tahoe" Preferences group. The sidebar row is added only under the
 // Tahoe appearance (see _pageNames build sites), so Classic Preferences is
-// unchanged. Currently hosts the toolbar group editor; future Tahoe-only settings
-// land here too.
+// unchanged. Hosts the shared toolbar layout editor.
 - (NSView *)_buildTahoePage {
     NSView *v = [[NSView alloc] init];
-    NppLocalizer *loc = [NppLocalizer shared];
-    CGFloat y = 380;
+    [self _addLayoutEditorToView:v top:380 title:@"Toolbar Groups"
+        help:@"Choose where each button appears on the Liquid Glass toolbar: on the group "
+             @"capsule (Toolbar), in the group's ▾ menu (Overflow menu), or Hidden. Turn a "
+             @"group off to hide it. Drag a button, or use Move Up and Move Down, to reorder "
+             @"it within its group. This layout is shared with the Classic toolbar."];
+    return v;
+}
 
-    NSTextField *th = [NSTextField labelWithString:[loc translate:@"Toolbar Groups"]];
+#pragma mark - Toolbar Layout Editor (shared by the Toolbar and Tahoe pages)
+
+// One editor, two pages: the Classic Toolbar page and the Tahoe page both edit the
+// same layout (ToolbarLayout). Each page hosts its own outline; they share the data
+// in _tahoeEditGroups and reload together after any change.
+
+static NSPasteboardType const kLayoutRowPasteboardType = @"com.npp.toolbar.row";
+
+// State codes used in the edit model and the placement popup: 0=Toolbar (primary),
+// 1=Overflow menu, 2=Hidden.
+
+// Build the editable tree from the on-disk layout (or defaults). Built-in groups draw
+// their button universe from the defaults catalog (so Hidden buttons can be
+// re-surfaced); the Plugins group's universe comes from the file (the host
+// materializes all live plugins into it).
+- (void)_buildTahoeEditGroups {
+    NSArray<NSDictionary *> *loaded   = [ToolbarLayout load];
+    NSArray<NSDictionary *> *defaults = [ToolbarLayout defaultBuiltinGroups];
+
+    NSMutableDictionary<NSString *, NSDictionary *> *loadedByLabel = [NSMutableDictionary dictionary];
+    for (NSDictionary *g in loaded) if (g[@"label"]) loadedByLabel[g[@"label"]] = g;
+
+    NSMutableArray *groups = [NSMutableArray array];
+
+    for (NSDictionary *def in defaults) {
+        NSString *label   = def[@"label"];
+        NSDictionary *lf  = loadedByLabel[label];
+        NSArray *primary  = lf ? (lf[@"primary"]  ?: @[]) : (def[@"primary"]  ?: @[]);
+        NSArray *overflow = lf ? (lf[@"overflow"] ?: @[]) : (def[@"overflow"] ?: @[]);
+        BOOL visible      = lf ? (lf[@"visible"] ? [lf[@"visible"] boolValue] : YES) : YES;
+        NSSet *primSet = [NSSet setWithArray:primary];
+        NSSet *overSet = [NSSet setWithArray:overflow];
+
+        // Display order: file primary, then file overflow, then any remaining
+        // default-universe buttons (currently hidden), in default order.
+        NSMutableArray<NSString *> *order = [NSMutableArray array];
+        for (NSString *k in primary)  if (![order containsObject:k]) [order addObject:k];
+        for (NSString *k in overflow) if (![order containsObject:k]) [order addObject:k];
+        NSMutableArray<NSString *> *universe = [NSMutableArray array];
+        [universe addObjectsFromArray:(def[@"primary"]  ?: @[])];
+        [universe addObjectsFromArray:(def[@"overflow"] ?: @[])];
+        for (NSString *k in universe) if (![order containsObject:k]) [order addObject:k];
+
+        NSMutableArray *items = [NSMutableArray array];
+        for (NSString *k in order) {
+            NSInteger state = [primSet containsObject:k] ? 0 : ([overSet containsObject:k] ? 1 : 2);
+            [items addObject:[@{ @"key": k,
+                                 @"display": [ToolbarLayout displayNameForId:k],
+                                 @"state": @(state) } mutableCopy]];
+        }
+        [groups addObject:[@{ @"label": label, @"kind": @"builtin",
+                              @"visible": @(visible), @"items": items } mutableCopy]];
+    }
+
+    // Plugins group (universe from the file; display name = the command name).
+    NSDictionary *plug = nil;
+    for (NSDictionary *g in loaded)
+        if ([g[@"kind"] isEqualToString:@"plugins"]) { plug = g; break; }
+    if (plug) {
+        NSMutableArray *items = [NSMutableArray array];
+        NSArray *sections = @[ @[@"primary", @0], @[@"overflow", @1], @[@"hidden", @2] ];
+        for (NSArray *sec in sections)
+            for (NSString *k in (NSArray *)(plug[sec[0]] ?: @[]))
+                [items addObject:[@{ @"key": k, @"display": k, @"state": sec[1] } mutableCopy]];
+        if (items.count)
+            [groups addObject:[@{ @"label": @"Plugins", @"kind": @"plugins",
+                                  @"visible": @(plug[@"visible"] ? [plug[@"visible"] boolValue] : YES),
+                                  @"customized": @([plug[@"customized"] boolValue]),
+                                  @"items": items } mutableCopy]];
+    }
+
+    _tahoeEditGroups = groups;
+}
+
+// Serialize the edit tree back to the file and tell the live window to rebuild.
+- (void)_tahoeSaveEditGroups {
+    NSMutableArray *model = [NSMutableArray array];
+    for (NSDictionary *g in _tahoeEditGroups) {
+        NSMutableArray *primary = [NSMutableArray array];
+        NSMutableArray *overflow = [NSMutableArray array];
+        NSMutableArray *hidden = [NSMutableArray array];
+        for (NSDictionary *it in g[@"items"]) {
+            NSString *k = it[@"key"];
+            switch ([it[@"state"] integerValue]) {
+                case 0:  [primary addObject:k];  break;
+                case 1:  [overflow addObject:k]; break;
+                default: [hidden addObject:k];   break;
+            }
+        }
+        NSMutableDictionary *gm = [@{ @"label": g[@"label"], @"kind": g[@"kind"],
+                                      @"visible": @([g[@"visible"] boolValue]),
+                                      @"primary": primary, @"overflow": overflow,
+                                      @"hidden": hidden } mutableCopy];
+        if ([g[@"customized"] boolValue]) gm[@"customized"] = @YES;
+        [model addObject:gm];
+    }
+    [ToolbarLayout saveModel:model];
+    [[NSNotificationCenter defaultCenter] postNotificationName:NPPToolbarLayoutChanged object:nil];
+    [self _reloadLayoutOutlines];
+}
+
+// Reload every editor outline (both pages) from the shared edit tree.
+- (void)_reloadLayoutOutlines {
+    for (NSOutlineView *ov in _layoutOutlines) {
+        [ov reloadData];
+        [ov expandItem:nil expandChildren:YES];
+    }
+}
+
+// The editor outline that contains `view` (the controls live inside one editor).
+- (NSOutlineView *)_layoutOutlineContaining:(NSView *)view {
+    for (NSView *a = view; a; a = a.superview)
+        if ([a isKindOfClass:[NSOutlineView class]]) return (NSOutlineView *)a;
+    return nil;
+}
+
+// The editor outline inside `root` (used by the move buttons, which sit beside it).
+- (NSOutlineView *)_layoutOutlineInView:(NSView *)root {
+    for (NSView *sub in root.subviews) {
+        if ([sub isKindOfClass:[NSOutlineView class]]) return (NSOutlineView *)sub;
+        NSOutlineView *found = [self _layoutOutlineInView:sub];
+        if (found) return found;
+    }
+    return nil;
+}
+
+- (void)_tahoePlacementChanged:(NSPopUpButton *)sender {
+    NSOutlineView *ov = [self _layoutOutlineContaining:sender];
+    NSInteger row = [ov rowForView:sender];
+    if (row < 0) return;
+    id item = [ov itemAtRow:row];
+    if (![item isKindOfClass:[NSMutableDictionary class]] || !item[@"state"]) return;
+    item[@"state"] = @(sender.indexOfSelectedItem);
+    // Editing a plugin row means the user has taken over the Plugins group, so the
+    // host stops re-applying its smart default and preserves this arrangement.
+    id parent = [ov parentForItem:item];
+    if ([parent isKindOfClass:[NSMutableDictionary class]] &&
+        [parent[@"kind"] isEqualToString:@"plugins"])
+        ((NSMutableDictionary *)parent)[@"customized"] = @YES;
+    [self _tahoeSaveEditGroups];
+}
+
+// Turn Tahoe mode on or off. Every copy of the checkbox follows, and a restart note shows.
+- (void)_layoutTahoeModeChanged:(NSButton *)sender {
+    NSInteger style = sender.state == NSControlStateValueOn ? NppAppearanceTahoe : NppAppearanceClassic;
+    [[NSUserDefaults standardUserDefaults] setInteger:style forKey:kPrefAppearanceStyle];
+    for (NSButton *box in _tahoeModeBoxes) box.state = sender.state;
+    for (NSTextField *note in _tahoeModeNotes) note.hidden = NO;
+}
+
+// Show/hide a whole group (the checkbox on the group row).
+- (void)_layoutGroupShowChanged:(NSButton *)sender {
+    NSOutlineView *ov = [self _layoutOutlineContaining:sender];
+    NSInteger row = [ov rowForView:sender];
+    if (row < 0) return;
+    NSMutableDictionary *group = [ov itemAtRow:row];
+    if (![group isKindOfClass:[NSMutableDictionary class]]) return;
+    group[@"visible"] = @(sender.state == NSControlStateValueOn);
+    [self _tahoeSaveEditGroups];
+}
+
+// Move the selected button up (tag -1) or down (tag +1) inside its group.
+- (void)_layoutMoveRow:(NSButton *)sender {
+    NSOutlineView *ov = [self _layoutOutlineInView:sender.superview];
+    if (!ov || ov.selectedRow < 0) return;
+    id item = [ov itemAtRow:ov.selectedRow];
+    id group = [ov parentForItem:item];
+    if (![group isKindOfClass:[NSMutableDictionary class]]) return;   // a group row is selected
+    NSMutableArray *items = group[@"items"];
+    NSInteger from = [items indexOfObjectIdenticalTo:item];
+    NSInteger to = from + sender.tag;
+    if (from == NSNotFound || to < 0 || to >= (NSInteger)items.count) return;
+    [items exchangeObjectAtIndex:from withObjectAtIndex:to];
+    [self _tahoeSaveEditGroups];
+    NSInteger row = [ov rowForItem:item];
+    if (row >= 0) [ov selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+}
+
+- (void)_tahoeResetGroups:(id)sender {
+    // Delete the file, let the host regenerate it (defaults + live plugins)
+    // synchronously, then reload every editor from the fresh file.
+    [ToolbarLayout removeFile];
+    [[NSNotificationCenter defaultCenter] postNotificationName:NPPToolbarLayoutChanged object:nil];
+    [self _buildTahoeEditGroups];
+    [self _reloadLayoutOutlines];
+}
+
+// Append the shared layout editor to `v` with its heading at `top`. Returns the y
+// below it, so a caller can place more controls under it.
+- (CGFloat)_addLayoutEditorToView:(NSView *)v top:(CGFloat)top title:(NSString *)title help:(NSString *)help {
+    NppLocalizer *loc = [NppLocalizer shared];
+    CGFloat y = top;
+
+    NSTextField *th = [NSTextField labelWithString:[loc translate:title]];
     th.font = [NSFont boldSystemFontOfSize:NSFont.systemFontSize];
     th.frame = NSMakeRect(20, y, 360, 20); [v addSubview:th];
     y -= 26;
 
-    NSTextField *help = [NSTextField wrappingLabelWithString:[loc translate:
-        @"Choose where each button appears in the Liquid Glass toolbar: on the "
-        @"group capsule (Toolbar), in the group's ▾ overflow menu, or Hidden."]];
-    help.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
-    help.textColor = NSColor.secondaryLabelColor;
-    help.frame = NSMakeRect(20, y - 34, 440, 34); [v addSubview:help];
-    y -= 34 + 14;
+    // Tahoe (Liquid Glass) on/off. The appearance is read at launch, so the change
+    // is shown as a restart note.
+    NSButton *tahoe = [NSButton checkboxWithTitle:[loc translate:@"Use Tahoe (Liquid Glass) mode"]
+                                           target:self action:@selector(_layoutTahoeModeChanged:)];
+    tahoe.frame = NSMakeRect(20, y - 18, 400, 20);
+    tahoe.state = ([NppThemeManager shared].effectiveAppearanceStyle == NppAppearanceTahoe)
+        ? NSControlStateValueOn : NSControlStateValueOff;
+    [v addSubview:tahoe];
+    if (!_tahoeModeBoxes) _tahoeModeBoxes = [NSHashTable weakObjectsHashTable];
+    [_tahoeModeBoxes addObject:tahoe];
+    NSTextField *restart = [NSTextField labelWithString:[loc translate:@"Restart NP++ to apply."]];
+    restart.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+    restart.textColor = NSColor.secondaryLabelColor;
+    restart.frame = NSMakeRect(40, y - 38, 400, 16);
+    restart.hidden = YES;
+    [v addSubview:restart];
+    if (!_tahoeModeNotes) _tahoeModeNotes = [NSHashTable weakObjectsHashTable];
+    [_tahoeModeNotes addObject:restart];
+    y -= 62;
+
+    NSTextField *hp = [NSTextField wrappingLabelWithString:[loc translate:help]];
+    hp.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+    hp.textColor = NSColor.secondaryLabelColor;
+    hp.frame = NSMakeRect(20, y - 66, 440, 66); [v addSubview:hp];
+    y -= 66 + 10;
+
+    // A legacy Classic file (toolbarButtonsConf.xml) overrides this layout in Classic.
+    NSString *legacy = [NppConfigDir() stringByAppendingPathComponent:@"toolbarButtonsConf.xml"];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:legacy]) {
+        NSTextField *warn = [NSTextField wrappingLabelWithString:[loc translate:
+            @"Classic is using toolbarButtonsConf.xml, so this layout applies only to Tahoe. "
+            @"Remove that file to use this editor in Classic."]];
+        warn.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+        warn.textColor = NSColor.systemOrangeColor;
+        warn.frame = NSMakeRect(20, y - 32, 440, 32); [v addSubview:warn];
+        y -= 32 + 8;
+    }
 
     [self _buildTahoeEditGroups];
-
-    const CGFloat outlineH = 340;
+    const CGFloat outlineH = 300;
     NSScrollView *sc = [[NSScrollView alloc] initWithFrame:
         NSMakeRect(20, y - outlineH, 460, outlineH)];
     sc.hasVerticalScroller = YES;
     sc.borderType = NSBezelBorder;
     sc.autohidesScrollers = YES;
-
     NSOutlineView *ov = [[NSOutlineView alloc] initWithFrame:sc.bounds];
     NSTableColumn *nameCol = [[NSTableColumn alloc] initWithIdentifier:@"name"];
-    nameCol.title = [loc translate:@"Button"]; nameCol.width = 280; nameCol.minWidth = 160;
+    nameCol.title = [loc translate:@"Button"]; nameCol.width = 260; nameCol.minWidth = 160;
     NSTableColumn *placeCol = [[NSTableColumn alloc] initWithIdentifier:@"placement"];
-    placeCol.title = [loc translate:@"Placement"]; placeCol.width = 150; placeCol.minWidth = 120;
+    placeCol.title = [loc translate:@"Placement"]; placeCol.width = 170; placeCol.minWidth = 120;
     [ov addTableColumn:nameCol];
     [ov addTableColumn:placeCol];
     ov.outlineTableColumn = nameCol;
@@ -994,19 +1229,32 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
     ov.indentationPerLevel = 14;
     ov.allowsColumnResizing = YES;
     ov.usesAlternatingRowBackgroundColors = YES;
+    [ov registerForDraggedTypes:@[kLayoutRowPasteboardType]];
+    [ov setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
     sc.documentView = ov;
     [v addSubview:sc];
-    _tahoeOutline = ov;
+    if (!_layoutOutlines) _layoutOutlines = [NSHashTable weakObjectsHashTable];
+    [_layoutOutlines addObject:ov];
     [ov reloadData];
     [ov expandItem:nil expandChildren:YES];
-    y -= outlineH + 12;
+    y -= outlineH + 10;
+
+    NSButton *up = [NSButton buttonWithTitle:[loc translate:@"Move Up"]
+                                      target:self action:@selector(_layoutMoveRow:)];
+    up.tag = -1; up.bezelStyle = NSBezelStyleRounded;
+    up.frame = NSMakeRect(20, y - 32, 90, 26); [v addSubview:up];
+
+    NSButton *down = [NSButton buttonWithTitle:[loc translate:@"Move Down"]
+                                        target:self action:@selector(_layoutMoveRow:)];
+    down.tag = 1; down.bezelStyle = NSBezelStyleRounded;
+    down.frame = NSMakeRect(116, y - 32, 100, 26); [v addSubview:down];
 
     NSButton *reset = [NSButton buttonWithTitle:[loc translate:@"Reset to Defaults"]
                                          target:self action:@selector(_tahoeResetGroups:)];
     reset.bezelStyle = NSBezelStyleRounded;
-    reset.frame = NSMakeRect(20, y - 6, 170, 26); [v addSubview:reset];
+    reset.frame = NSMakeRect(232, y - 32, 170, 26); [v addSubview:reset];
 
-    return v;
+    return y - 64;
 }
 
 - (void)_toolbarColorModeChanged:(NSButton *)sender {
@@ -1032,123 +1280,7 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
     [[NSNotificationCenter defaultCenter] postNotificationName:@"NPPToolbarColorChanged" object:nil];
 }
 
-#pragma mark - Tahoe Toolbar Group Editor (gated)
-
-// State codes used in the edit model and the placement popup: 0=Toolbar (primary),
-// 1=Overflow menu, 2=Hidden.
-
-// Build the editable tree from the on-disk Tahoe config (or defaults). Built-in
-// groups draw their button universe from the defaults catalog (so Hidden buttons
-// can be re-surfaced); the Plugins group's universe comes from the file (the host
-// materializes all live plugins into it).
-- (void)_buildTahoeEditGroups {
-    NSArray<NSDictionary *> *loaded   = [TahoeToolbarConfig load];
-    NSArray<NSDictionary *> *defaults = [TahoeToolbarConfig defaultBuiltinGroups];
-
-    NSMutableDictionary<NSString *, NSDictionary *> *loadedByLabel = [NSMutableDictionary dictionary];
-    for (NSDictionary *g in loaded) if (g[@"label"]) loadedByLabel[g[@"label"]] = g;
-
-    NSMutableArray *groups = [NSMutableArray array];
-
-    for (NSDictionary *def in defaults) {
-        NSString *label   = def[@"label"];
-        NSDictionary *lf  = loadedByLabel[label];
-        NSArray *primary  = lf ? (lf[@"primary"]  ?: @[]) : (def[@"primary"]  ?: @[]);
-        NSArray *overflow = lf ? (lf[@"overflow"] ?: @[]) : (def[@"overflow"] ?: @[]);
-        NSSet *primSet = [NSSet setWithArray:primary];
-        NSSet *overSet = [NSSet setWithArray:overflow];
-
-        // Display order: file primary, then file overflow, then any remaining
-        // default-universe buttons (currently hidden), in default order.
-        NSMutableArray<NSString *> *order = [NSMutableArray array];
-        for (NSString *k in primary)  if (![order containsObject:k]) [order addObject:k];
-        for (NSString *k in overflow) if (![order containsObject:k]) [order addObject:k];
-        NSMutableArray<NSString *> *universe = [NSMutableArray array];
-        [universe addObjectsFromArray:(def[@"primary"]  ?: @[])];
-        [universe addObjectsFromArray:(def[@"overflow"] ?: @[])];
-        for (NSString *k in universe) if (![order containsObject:k]) [order addObject:k];
-
-        NSMutableArray *items = [NSMutableArray array];
-        for (NSString *k in order) {
-            NSInteger state = [primSet containsObject:k] ? 0 : ([overSet containsObject:k] ? 1 : 2);
-            [items addObject:[@{ @"key": k,
-                                 @"display": [TahoeToolbarConfig displayNameForId:k],
-                                 @"state": @(state) } mutableCopy]];
-        }
-        [groups addObject:[@{ @"label": label, @"kind": @"builtin",
-                              @"items": items } mutableCopy]];
-    }
-
-    // Plugins group (universe from the file; display name = the command name).
-    NSDictionary *plug = nil;
-    for (NSDictionary *g in loaded)
-        if ([g[@"kind"] isEqualToString:@"plugins"]) { plug = g; break; }
-    if (plug) {
-        NSMutableArray *items = [NSMutableArray array];
-        NSArray *sections = @[ @[@"primary", @0], @[@"overflow", @1], @[@"hidden", @2] ];
-        for (NSArray *sec in sections)
-            for (NSString *k in (NSArray *)(plug[sec[0]] ?: @[]))
-                [items addObject:[@{ @"key": k, @"display": k, @"state": sec[1] } mutableCopy]];
-        if (items.count)
-            [groups addObject:[@{ @"label": @"Plugins", @"kind": @"plugins",
-                                  @"customized": @([plug[@"customized"] boolValue]),
-                                  @"items": items } mutableCopy]];
-    }
-
-    _tahoeEditGroups = groups;
-}
-
-// Serialize the edit tree back to the file and tell the live window to rebuild.
-- (void)_tahoeSaveEditGroups {
-    NSMutableArray *model = [NSMutableArray array];
-    for (NSDictionary *g in _tahoeEditGroups) {
-        NSMutableArray *primary = [NSMutableArray array];
-        NSMutableArray *overflow = [NSMutableArray array];
-        NSMutableArray *hidden = [NSMutableArray array];
-        for (NSDictionary *it in g[@"items"]) {
-            NSString *k = it[@"key"];
-            switch ([it[@"state"] integerValue]) {
-                case 0:  [primary addObject:k];  break;
-                case 1:  [overflow addObject:k]; break;
-                default: [hidden addObject:k];   break;
-            }
-        }
-        NSMutableDictionary *gm = [@{ @"label": g[@"label"], @"kind": g[@"kind"],
-                                      @"primary": primary, @"overflow": overflow,
-                                      @"hidden": hidden } mutableCopy];
-        if ([g[@"customized"] boolValue]) gm[@"customized"] = @YES;
-        [model addObject:gm];
-    }
-    [TahoeToolbarConfig saveModel:model];
-    [[NSNotificationCenter defaultCenter] postNotificationName:NPPTahoeToolbarConfigChanged object:nil];
-}
-
-- (void)_tahoePlacementChanged:(NSPopUpButton *)sender {
-    NSInteger row = [_tahoeOutline rowForView:sender];
-    if (row < 0) return;
-    id item = [_tahoeOutline itemAtRow:row];
-    if (![item isKindOfClass:[NSMutableDictionary class]] || !item[@"state"]) return;
-    item[@"state"] = @(sender.indexOfSelectedItem);
-    // Editing a plugin row means the user has taken over the Plugins group, so the
-    // host stops re-applying its smart default and preserves this arrangement.
-    id parent = [_tahoeOutline parentForItem:item];
-    if ([parent isKindOfClass:[NSMutableDictionary class]] &&
-        [parent[@"kind"] isEqualToString:@"plugins"])
-        ((NSMutableDictionary *)parent)[@"customized"] = @YES;
-    [self _tahoeSaveEditGroups];
-}
-
-- (void)_tahoeResetGroups:(id)sender {
-    // Delete the file, let the host regenerate it (defaults + live plugins)
-    // synchronously, then reload the editor from the fresh file.
-    [TahoeToolbarConfig removeFile];
-    [[NSNotificationCenter defaultCenter] postNotificationName:NPPTahoeToolbarConfigChanged object:nil];
-    [self _buildTahoeEditGroups];
-    [_tahoeOutline reloadData];
-    [_tahoeOutline expandItem:nil expandChildren:YES];
-}
-
-#pragma mark NSOutlineView data source / delegate (Tahoe editor)
+#pragma mark NSOutlineView data source / delegate (layout editor)
 
 - (NSInteger)outlineView:(NSOutlineView *)ov numberOfChildrenOfItem:(id)item {
     if (item == nil) return (NSInteger)_tahoeEditGroups.count;
@@ -1166,8 +1298,9 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
     return [item isKindOfClass:[NSDictionary class]] && item[@"items"] != nil;
 }
 
+// Button rows can be selected (to move them); group rows cannot.
 - (BOOL)outlineView:(NSOutlineView *)ov shouldSelectItem:(id)item {
-    return NO;
+    return !([item isKindOfClass:[NSDictionary class]] && item[@"items"] != nil);
 }
 
 - (NSView *)outlineView:(NSOutlineView *)ov viewForTableColumn:(NSTableColumn *)col item:(id)item {
@@ -1175,10 +1308,10 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
     BOOL isGroup = ([item isKindOfClass:[NSDictionary class]] && item[@"items"] != nil);
 
     if ([col.identifier isEqualToString:@"name"]) {
-        NSTextField *tf = [ov makeViewWithIdentifier:@"tahoeName" owner:self];
+        NSTextField *tf = [ov makeViewWithIdentifier:@"layoutName" owner:self];
         if (!tf) {
             tf = [NSTextField labelWithString:@""];
-            tf.identifier = @"tahoeName";
+            tf.identifier = @"layoutName";
             tf.bordered = NO; tf.drawsBackground = NO; tf.editable = NO;
         }
         if (isGroup) {
@@ -1192,11 +1325,22 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
     }
 
     if ([col.identifier isEqualToString:@"placement"]) {
-        if (isGroup) return nil;
-        NSPopUpButton *pop = [ov makeViewWithIdentifier:@"tahoePlace" owner:self];
+        if (isGroup) {
+            NSButton *show = [ov makeViewWithIdentifier:@"layoutShow" owner:self];
+            if (!show) {
+                show = [NSButton checkboxWithTitle:[loc translate:@"Shown"]
+                                            target:self action:@selector(_layoutGroupShowChanged:)];
+                show.identifier = @"layoutShow";
+                show.controlSize = NSControlSizeSmall;
+                show.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+            }
+            show.state = [item[@"visible"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+            return show;
+        }
+        NSPopUpButton *pop = [ov makeViewWithIdentifier:@"layoutPlace" owner:self];
         if (!pop) {
             pop = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 140, 22) pullsDown:NO];
-            pop.identifier = @"tahoePlace";
+            pop.identifier = @"layoutPlace";
             pop.controlSize = NSControlSizeSmall;
             pop.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
             [pop addItemsWithTitles:@[ [loc translate:@"Toolbar"],
@@ -1209,6 +1353,49 @@ NSString *const kPrefStyleFontSize      = @"styleFontSize";
         return pop;
     }
     return nil;
+}
+
+// Drag a button row. The payload is "<group label>\n<key>" so a drop can check the group.
+- (id<NSPasteboardWriting>)outlineView:(NSOutlineView *)ov pasteboardWriterForItem:(id)item {
+    if (![item isKindOfClass:[NSDictionary class]] || item[@"items"] != nil) return nil;
+    id group = [ov parentForItem:item];
+    if (![group isKindOfClass:[NSDictionary class]]) return nil;
+    NSPasteboardItem *pb = [[NSPasteboardItem alloc] init];
+    [pb setString:[NSString stringWithFormat:@"%@\n%@", group[@"label"], item[@"key"]]
+          forType:kLayoutRowPasteboardType];
+    return pb;
+}
+
+// Rows move only inside their own group, so a drop is valid only onto that group's
+// own rows (between two of them).
+- (NSDragOperation)outlineView:(NSOutlineView *)ov validateDrop:(id<NSDraggingInfo>)info
+                  proposedItem:(id)item proposedChildIndex:(NSInteger)index {
+    NSString *payload = [info.draggingPasteboard stringForType:kLayoutRowPasteboardType];
+    if (!payload) return NSDragOperationNone;
+    NSString *label = [[payload componentsSeparatedByString:@"\n"] firstObject];
+    if (![item isKindOfClass:[NSDictionary class]] || item[@"items"] == nil) return NSDragOperationNone;
+    if (![item[@"label"] isEqualToString:label] || index == NSOutlineViewDropOnItemIndex)
+        return NSDragOperationNone;
+    return NSDragOperationMove;
+}
+
+- (BOOL)outlineView:(NSOutlineView *)ov acceptDrop:(id<NSDraggingInfo>)info
+               item:(id)item childIndex:(NSInteger)index {
+    NSString *payload = [info.draggingPasteboard stringForType:kLayoutRowPasteboardType];
+    if (!payload || ![item isKindOfClass:[NSDictionary class]]) return NO;
+    NSString *key = [[payload componentsSeparatedByString:@"\n"] lastObject];
+    NSMutableArray *items = item[@"items"];
+    NSInteger from = NSNotFound;
+    for (NSInteger i = 0; i < (NSInteger)items.count; i++)
+        if ([items[i][@"key"] isEqualToString:key]) { from = i; break; }
+    if (from == NSNotFound) return NO;
+    NSInteger to = index > from ? index - 1 : index;   // index is in pre-removal terms
+    if (to == from) return NO;
+    NSMutableDictionary *row = items[from];
+    [items removeObjectAtIndex:from];
+    [items insertObject:row atIndex:to];
+    [self _tahoeSaveEditGroups];
+    return YES;
 }
 
 #pragma mark - Editor Page

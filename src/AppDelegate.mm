@@ -213,38 +213,42 @@ static void NppRecoveryDone(void) {
     }
 
     // ── Session / file handling ─────────────────────────────────────────
-
-    NSDate *uncleanRunStart = NppMarkLaunch();
-    BOOL hasContent = NO;
-    if (cli.sessionFile.length) {
-        [self.mainWindowController loadSessionFromPath:cli.sessionFile];
-        hasContent = YES;
-    } else if (cli.filePaths.count > 0) {
-        [self _openFilesFromCLI:cli inController:self.mainWindowController];
-        hasContent = YES;
-    } else if (!cli.noSession &&
-               [[NSUserDefaults standardUserDefaults] boolForKey:kPrefRememberSession]) {
-        // Issue #87 — Preferences > Backup > "Remember current session for next launch"
-        // mirrors the Windows NPP RememberLastSession option. Off → start with a clean
-        // editor on each launch. -nosession CLI flag still overrides per-invocation.
-        hasContent = [self.mainWindowController restoreLastSession];
-    }
-    // Crash recovery is its own step, whatever opened above (session, CLI
-    // files, -openSession, or nothing with the session off): after an unclean
-    // exit, backups that run wrote and no manifest names are the only copy of
-    // its unsaved text. After a clean exit nothing is recovered.
-    if (uncleanRunStart) {
-        if ([self.mainWindowController recoverBackupsFromUncleanExitSince:uncleanRunStart])
+    // Deferred to the next run-loop pass: restoring a large file blocks the main thread,
+    // and while it runs macOS does not paint the app's menu bar (it stays blank until the
+    // mouse crosses it). Letting the window and menu paint first fixes that.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSDate *uncleanRunStart = NppMarkLaunch();
+        BOOL hasContent = NO;
+        if (cli.sessionFile.length) {
+            [self.mainWindowController loadSessionFromPath:cli.sessionFile];
             hasContent = YES;
-    }
-    NppRecoveryDone();
-    // If nothing was opened, create an empty tab (first launch or -nosession with no files)
-    if (!hasContent) {
-        #pragma clang diagnostic push
-        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        [self.mainWindowController performSelector:@selector(newDocument:) withObject:nil];
-        #pragma clang diagnostic pop
-    }
+        } else if (cli.filePaths.count > 0) {
+            [self _openFilesFromCLI:cli inController:self.mainWindowController];
+            hasContent = YES;
+        } else if (!cli.noSession &&
+                   [[NSUserDefaults standardUserDefaults] boolForKey:kPrefRememberSession]) {
+            // Issue #87 — Preferences > Backup > "Remember current session for next launch"
+            // mirrors the Windows NPP RememberLastSession option. Off → start with a clean
+            // editor on each launch. -nosession CLI flag still overrides per-invocation.
+            hasContent = [self.mainWindowController restoreLastSession];
+        }
+        // Crash recovery is its own step, whatever opened above (session, CLI
+        // files, -openSession, or nothing with the session off): after an unclean
+        // exit, backups that run wrote and no manifest names are the only copy of
+        // its unsaved text. After a clean exit nothing is recovered.
+        if (uncleanRunStart) {
+            if ([self.mainWindowController recoverBackupsFromUncleanExitSince:uncleanRunStart])
+                hasContent = YES;
+        }
+        NppRecoveryDone();
+        // If nothing was opened, create an empty tab (first launch or -nosession with no files)
+        if (!hasContent) {
+            #pragma clang diagnostic push
+            #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            [self.mainWindowController performSelector:@selector(newDocument:) withObject:nil];
+            #pragma clang diagnostic pop
+        }
+    });
 
     // Re-open side panels that were open last quit (issue #132). Primary
     // window only — secondary windows from Window > New Window must not
