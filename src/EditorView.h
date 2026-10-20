@@ -118,6 +118,24 @@ extern NSNotificationName const EditorViewZoomDidChangeNotification;
 /// Open a file from disk into this editor.
 - (BOOL)loadFileAtPath:(NSString *)path error:(NSError **)error;
 
+/// Section mode (huge files): loads only the bytes [offset, offset+length), snapped to
+/// line breaks so the section starts and ends on whole lines. Read-only in this step.
+- (BOOL)loadSectionOfFileAtPath:(NSString *)path offset:(unsigned long long)offset
+                         length:(unsigned long long)length error:(NSError **)error;
+/// YES when the buffer holds a section of a larger file.
+@property (nonatomic, readonly) BOOL isSectionMode;
+/// Byte range of the loaded section within the file, and the file's total size.
+@property (nonatomic, readonly) unsigned long long sectionStart;
+@property (nonatomic, readonly) unsigned long long sectionEnd;
+@property (nonatomic, readonly) unsigned long long totalFileSize;
+/// The section length asked for (the step size for Next and Previous).
+@property (nonatomic, readonly) unsigned long long requestedSectionLength;
+/// Loads the section that starts at `offset`, with the same length as the current one.
+/// Only valid in section mode; the caller checks for unsaved edits first.
+- (BOOL)showSectionAtOffset:(unsigned long long)offset error:(NSError **)error;
+/// Status-bar text for section mode, e.g. "Bytes 1.2 GB to 1.3 GB of 2.5 GB"; nil otherwise.
+- (nullable NSString *)sectionDescription;
+
 /// Save current content to filePath. Returns YES on success.
 - (BOOL)saveError:(NSError **)error;
 

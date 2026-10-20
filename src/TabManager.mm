@@ -1,5 +1,58 @@
 #import "TabManager.h"
 #import "EditorView.h"
+#import "PreferencesWindowController.h"
+
+extern NSString *const kPrefLargeFileEnabled;
+extern NSString *const kPrefLargeFileSizeMB;
+
+// Chooses which part of a huge file to open. The From slider is a percentage of the
+// file; Size is in MB. Labels update live as the sliders move.
+@interface _NppSectionChooser : NSObject
+@property (nonatomic, strong) NSSlider *fromSlider, *sizeSlider;
+@property (nonatomic, strong) NSTextField *fromLabel, *sizeLabel;
+@end
+@implementation _NppSectionChooser
+- (void)changed:(id)sender {
+    self.fromLabel.stringValue = [NSString stringWithFormat:@"From: %d%%", (int)round(self.fromSlider.doubleValue)];
+    self.sizeLabel.stringValue = [NSString stringWithFormat:@"Size: %d MB", (int)round(self.sizeSlider.doubleValue)];
+}
+@end
+
+typedef NS_ENUM(NSInteger, NppOpenChoice) { NppOpenChoiceSection, NppOpenChoiceWhole, NppOpenChoiceCancel };
+
+// Asks how to open a huge file. On "Open Section", returns the byte range to load.
+static NppOpenChoice NppChooseOpenMode(NSString *path, unsigned long long total,
+                                       unsigned long long *outOffset, unsigned long long *outLength) {
+    NSInteger sizeMB = [[NSUserDefaults standardUserDefaults] integerForKey:kPrefLargeFileSizeMB];
+    (void)sizeMB;   // threshold check happens in the caller
+    _NppSectionChooser *chooser = [[_NppSectionChooser alloc] init];
+    NSView *box = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 360, 96)];
+    chooser.fromLabel = [NSTextField labelWithString:@"From: 0%"];
+    chooser.fromLabel.frame = NSMakeRect(0, 66, 360, 18);
+    chooser.fromSlider = [NSSlider sliderWithValue:0 minValue:0 maxValue:100 target:chooser action:@selector(changed:)];
+    chooser.fromSlider.frame = NSMakeRect(0, 44, 360, 22);
+    chooser.sizeLabel = [NSTextField labelWithString:@"Size: 64 MB"];
+    chooser.sizeLabel.frame = NSMakeRect(0, 22, 360, 18);
+    chooser.sizeSlider = [NSSlider sliderWithValue:64 minValue:1 maxValue:256 target:chooser action:@selector(changed:)];
+    chooser.sizeSlider.frame = NSMakeRect(0, 0, 360, 22);
+    for (NSView *v in @[chooser.fromLabel, chooser.fromSlider, chooser.sizeLabel, chooser.sizeSlider]) [box addSubview:v];
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = [NSString stringWithFormat:@"%@ is large", path.lastPathComponent];
+    alert.informativeText = @"Open only part of the file. The rest stays on disk. Line breaks are adjusted to keep whole lines.";
+    alert.accessoryView = box;
+    [alert addButtonWithTitle:@"Open Section"];
+    [alert addButtonWithTitle:@"Load Whole File"];
+    [alert addButtonWithTitle:@"Cancel"];
+    NSModalResponse r = [alert runModal];
+    if (r == NSAlertFirstButtonReturn) {
+        double fromPct = chooser.fromSlider.doubleValue / 100.0;
+        *outOffset = (unsigned long long)(fromPct * (double)total);
+        *outLength = (unsigned long long)chooser.sizeSlider.doubleValue * 1000000ULL;   // decimal MB, as in the status bar
+        return NppOpenChoiceSection;
+    }
+    return r == NSAlertSecondButtonReturn ? NppOpenChoiceWhole : NppOpenChoiceCancel;
+}
 
 // ── NppDropView ──────────────────────────────────────────────────────────────
 @implementation NppDropView
@@ -93,7 +146,23 @@
     editor.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
     NSError *error;
-    if (![editor loadFileAtPath:path error:&error]) {
+    // Huge files: ask which part to open (threshold from Preferences > Performance).
+    BOOL askSection = NO;
+    unsigned long long offset = 0, length = 0;
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    unsigned long long fileSize = [[[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil][NSFileSize] unsignedLongLongValue];
+    NSInteger thresholdMB = MAX(1, [ud integerForKey:kPrefLargeFileSizeMB]);
+    if ([ud boolForKey:kPrefLargeFileEnabled] && fileSize > (unsigned long long)thresholdMB * 1000000ULL) {
+        NppOpenChoice choice = NppChooseOpenMode(path, fileSize, &offset, &length);
+        if (choice == NppOpenChoiceCancel) return nil;
+        askSection = (choice == NppOpenChoiceSection);
+    }
+    if (askSection) {
+        if (![editor loadSectionOfFileAtPath:path offset:offset length:length error:&error]) {
+            [[NSAlert alertWithError:error] runModal];
+            return nil;
+        }
+    } else if (![editor loadFileAtPath:path error:&error]) {
         [[NSAlert alertWithError:error] runModal];
         return nil;
     }

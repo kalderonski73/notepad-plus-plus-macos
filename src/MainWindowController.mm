@@ -2270,6 +2270,61 @@ static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
     return [self currentEditor];
 }
 
+#pragma mark - Large file sections (navigation)
+
+// Moves the section, refusing when the current section has unsaved edits (saving sections
+// is the next step, so edits must not be dropped silently).
+- (void)_moveToSectionAtOffset:(unsigned long long)offset {
+    EditorView *ed = [self currentEditor];
+    if (!ed.isSectionMode) return;
+    if (ed.isModified) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"This section has unsaved changes";
+        alert.informativeText = @"Saving sections is not available yet, so moving to another section is blocked to keep your edits.";
+        [alert runModal];
+        return;
+    }
+    NSError *err = nil;
+    if (![ed showSectionAtOffset:offset error:&err]) {
+        [[NSAlert alertWithError:err] runModal];
+        return;
+    }
+    [self updateStatusBar];
+}
+
+- (void)nextSection:(id)sender {
+    EditorView *ed = [self currentEditor];
+    if (ed.isSectionMode) [self _moveToSectionAtOffset:ed.sectionEnd];
+}
+
+- (void)previousSection:(id)sender {
+    EditorView *ed = [self currentEditor];
+    if (!ed.isSectionMode) return;
+    if (ed.sectionStart == 0) return;   // already the first section
+    unsigned long long step = ed.requestedSectionLength;
+    [self _moveToSectionAtOffset:(ed.sectionStart > step ? ed.sectionStart - step : 0)];
+}
+
+- (void)goToSectionOffset:(id)sender {
+    EditorView *ed = [self currentEditor];
+    if (!ed.isSectionMode) return;
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"Go to byte offset";
+    alert.informativeText = [NSString stringWithFormat:@"Enter a position in MB (0 to %.0f MB).",
+                             ed.totalFileSize / 1000000.0];
+    NSTextField *input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 200, 22)];
+    input.placeholderString = @"e.g. 1200";
+    alert.accessoryView = input;
+    [alert addButtonWithTitle:@"Go"];
+    [alert addButtonWithTitle:@"Cancel"];
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    double mb = input.doubleValue;
+    if (mb < 0) mb = 0;
+    unsigned long long offset = (unsigned long long)(mb * 1000000.0);
+    if (offset > ed.totalFileSize) offset = ed.totalFileSize;
+    [self _moveToSectionAtOffset:offset];
+}
+
 #pragma mark - Window opacity (see through the app while reading)
 
 static NSString *const kPrefWindowOpacity = @"NPPWindowOpacity";
@@ -6900,6 +6955,10 @@ static NSArray<NSDictionary *> *convertRecordedToXmlFormat(NSArray<NSDictionary 
         if (mi) mi.state = (mode == mi.tag) ? NSControlStateValueOn : NSControlStateValueOff;
         return YES;
     }
+
+    if (action == @selector(nextSection:) || action == @selector(previousSection:) ||
+        action == @selector(goToSectionOffset:))
+        return ed && ed.isSectionMode;
 
     // Undo and Redo follow the editor's undo history, for menus and toolbar buttons alike.
     if (action == @selector(undo:))
@@ -11652,6 +11711,8 @@ static NSString *languageDisplayName(NSString *langCode) {
     sptr_t docLength = [ed.scintillaView message:SCI_GETLENGTH wParam:0 lParam:0];
     _statusLeft.stringValue  = [NSString stringWithFormat:@"Ln %ld, Col %ld  |  Length: %ld  |  Lines: %ld  |  Zoom: %ld%%",
                                  (long)ed.cursorLine, (long)ed.cursorColumn, (long)docLength, (long)ed.lineCount, (long)ed.zoomPercentage];
+    if (ed.sectionDescription)   // section mode: say which part of the file is shown
+        _statusLeft.stringValue = [NSString stringWithFormat:@"%@  |  %@", ed.sectionDescription, _statusLeft.stringValue];
     NSString *lang = languageDisplayName(ed.currentLanguage);
     NSString *mode = ed.isOverwriteMode ? @"OVR" : @"INS";
     _statusRight.stringValue = [NSString stringWithFormat:@"%@  |  %@  |  %@  |  %@",

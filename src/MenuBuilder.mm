@@ -610,6 +610,12 @@ static NSMenu *buildLanguageMenu() {
     }
     [viewMenu addItem:withSubmenu(@"Editor Theme", editorThemeMenu)];
 
+    NSMenu *sectionMenu = submenu(@"Large File Sections");
+    [sectionMenu addItem:item(@"Next Section", @selector(nextSection:), @"")];
+    [sectionMenu addItem:item(@"Previous Section", @selector(previousSection:), @"")];
+    [sectionMenu addItem:item(@"Go to Byte Offset…", @selector(goToSectionOffset:), @"")];
+    [viewMenu addItem:withSubmenu(@"Large File Sections", sectionMenu)];
+
     NSMenu *showSymMenu = submenu(@"Show Symbol");
     [showSymMenu addItem:item(@"Show White Space and TAB", @selector(showWhiteSpaceAndTab:), @"")];
     [showSymMenu addItem:item(@"Show End of Line",        @selector(showEndOfLine:),        @"")];

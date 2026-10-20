@@ -326,6 +326,14 @@ static void NppRecoveryDone(void) {
     if (_pendingFilePaths.count > 0) {
         NSArray<NSString *> *files = [self _expandFolderArguments:_pendingFilePaths];
         [_pendingFilePaths removeAllObjects];
+        // macOS also queues the command-line files as open-file events; they were already
+        // opened above, so skip them here (a second open would show a second size chooser).
+        NSMutableSet<NSString *> *alreadyOpened = [NSMutableSet set];
+        for (NSString *p in cli.filePaths) [alreadyOpened addObject:[p stringByStandardizingPath]];
+        NSMutableArray<NSString *> *toOpen = [NSMutableArray array];
+        for (NSString *p in files)
+            if (![alreadyOpened containsObject:[p stringByStandardizingPath]]) [toOpen addObject:p];
+        files = toOpen;
         for (NSString *path in files) {
             [self.mainWindowController openFileAtPath:path];
         }

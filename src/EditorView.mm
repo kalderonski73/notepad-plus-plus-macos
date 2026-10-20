@@ -298,6 +298,9 @@ static NSUInteger nppLargeFileThreshold(void) {
 
 @implementation EditorView {
     BOOL    _isModified;
+    BOOL    _sectionMode;
+    unsigned long long _sectionRequestedLength;
+    unsigned long long _sectionStart, _sectionEnd, _totalFileSize;
     // Loaded from a backup (-markAsModified): the Scintilla save point is the
     // backup text, not the file, so reaching it must not clear _isModified.
     // Cleared by a real save or a reload from disk.
@@ -440,6 +443,219 @@ static NSUInteger nppLargeFileThreshold(void) {
 }
 
 #pragma mark - File I/O
+
+#pragma mark - Section save (splice into the original file)
+
+// Saves a section by writing a new file: bytes before the section, the section's current text,
+// then bytes after it. The original is replaced only after the new file is complete, and a
+// hard-linked "<file>.bak" keeps the original content. On any failure the original is untouched.
+- (BOOL)_saveSectionToPath:(NSString *)path error:(NSError **)error {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![path isEqualToString:_filePath]) {
+        if (error) *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFeatureUnsupportedError
+                                            userInfo:@{NSLocalizedDescriptionKey: @"Save As is not available for file sections yet. Use Save."}];
+        return NO;
+    }
+    NSDictionary *attrs = [fm attributesOfItemAtPath:path error:error];
+    if (!attrs) return NO;
+    unsigned long long currentSize = [attrs[NSFileSize] unsignedLongLongValue];
+    NSDate *currentMod = attrs[NSFileModificationDate];
+    if (currentSize != _totalFileSize || (_lastKnownModDate && ![currentMod isEqualToDate:_lastKnownModDate])) {
+        if (error) *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError
+                                            userInfo:@{NSLocalizedDescriptionKey: @"The file changed on disk since it was opened. Save was cancelled to protect it."}];
+        return NO;
+    }
+
+    // Enough free space for a complete second copy, with a safety margin.
+    NSDictionary *fsAttrs = [fm attributesOfFileSystemForPath:path error:nil];
+    unsigned long long freeBytes = [fsAttrs[NSFileSystemFreeSize] unsignedLongLongValue];
+    if (freeBytes < _totalFileSize + 16ULL * 1000000ULL) {
+        if (error) *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteOutOfSpaceError
+                                            userInfo:@{NSLocalizedDescriptionKey: @"Not enough free disk space to save this file safely."}];
+        return NO;
+    }
+
+    // Backup: a hard link keeps the original bytes, and costs no extra space.
+    NSString *bak = [path stringByAppendingString:@".bak"];
+    if (![fm fileExistsAtPath:bak]) {
+        if (![fm linkItemAtPath:path toPath:bak error:error]) return NO;   // no backup, no save
+    }
+
+    // Build the new file next to the original (same volume, so the final swap is atomic).
+    NSString *tmp = [[path stringByDeletingLastPathComponent]
+                     stringByAppendingPathComponent:[NSString stringWithFormat:@".npp-save-%@", [[NSUUID UUID] UUIDString]]];
+    if (![fm createFileAtPath:tmp contents:nil attributes:nil]) {
+        if (error) *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:nil];
+        return NO;
+    }
+    NSFileHandle *src = [NSFileHandle fileHandleForReadingAtPath:path];
+    NSFileHandle *dst = [NSFileHandle fileHandleForWritingAtPath:tmp];
+    BOOL ok = (src != nil && dst != nil);
+    const unsigned long long kChunk = 16ULL * 1024 * 1024;
+
+    // 1. Bytes before the section.
+    unsigned long long copied = 0;
+    while (ok && copied < _sectionStart) {
+        unsigned long long n = MIN(kChunk, _sectionStart - copied);
+        [src seekToFileOffset:copied];
+        NSData *d = [src readDataOfLength:(NSUInteger)n];
+        ok = (d.length == n);
+        if (ok) [dst writeData:d];
+        copied += n;
+    }
+
+    // 2. The section's current text (Scintilla holds it as UTF-8 bytes).
+    if (ok) {
+        sptr_t len = [_scintillaView message:SCI_GETLENGTH wParam:0 lParam:0];
+        const char *bytes = (const char *)[_scintillaView message:SCI_GETCHARACTERPOINTER wParam:0 lParam:0];
+        if (len > 0 && bytes) [dst writeData:[NSData dataWithBytesNoCopy:(void *)bytes length:(NSUInteger)len freeWhenDone:NO]];
+    }
+    unsigned long long newSectionLength = [_scintillaView message:SCI_GETLENGTH wParam:0 lParam:0];
+
+    // 3. Bytes after the section.
+    unsigned long long pos = _sectionEnd;
+    while (ok && pos < _totalFileSize) {
+        unsigned long long n = MIN(kChunk, _totalFileSize - pos);
+        [src seekToFileOffset:pos];
+        NSData *d = [src readDataOfLength:(NSUInteger)n];
+        ok = (d.length == n);
+        if (ok) [dst writeData:d];
+        pos += n;
+    }
+
+    if (ok) ok = (fsync(dst.fileDescriptor) == 0);   // flush the new file to disk before the swap
+    [src closeFile];
+    [dst closeFile];
+    if (!ok) {
+        [fm removeItemAtPath:tmp error:nil];
+        if (error && !*error) *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:nil];
+        return NO;
+    }
+
+    // 4. Swap in the new file. The backup hard link keeps the old bytes.
+    if (![fm replaceItemAtURL:[NSURL fileURLWithPath:path] withItemAtURL:[NSURL fileURLWithPath:tmp]
+              backupItemName:nil options:0 resultingItemURL:nil error:error]) {
+        [fm removeItemAtPath:tmp error:nil];
+        return NO;
+    }
+
+    // 5. Bookkeeping: the section now covers the new text.
+    unsigned long long newTotal = _totalFileSize - (_sectionEnd - _sectionStart) + newSectionLength;
+    _sectionEnd = _sectionStart + newSectionLength;
+    _totalFileSize = newTotal;
+    _isModified = NO;
+    [_scintillaView message:SCI_SETSAVEPOINT wParam:0 lParam:0];
+    _lastKnownModDate = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil][NSFileModificationDate];
+    return YES;
+}
+
+#pragma mark - Section mode (huge files)
+
+- (BOOL)isSectionMode { return _sectionMode; }
+- (unsigned long long)sectionStart { return _sectionStart; }
+- (unsigned long long)sectionEnd { return _sectionEnd; }
+- (unsigned long long)totalFileSize { return _totalFileSize; }
+- (unsigned long long)requestedSectionLength { return _sectionRequestedLength; }
+
+// Decimal units (1 GB = 1,000,000,000 bytes), the same as Finder.
+static NSString *NppSizeText(unsigned long long bytes) {
+    if (bytes >= 1000000000ULL)
+        return [NSString stringWithFormat:@"%.2f GB", bytes / 1000000000.0];
+    return [NSString stringWithFormat:@"%.1f MB", bytes / 1000000.0];
+}
+
+- (BOOL)showSectionAtOffset:(unsigned long long)offset error:(NSError **)error {
+    if (!_sectionMode || !_filePath) return NO;
+    return [self loadSectionOfFileAtPath:_filePath offset:offset
+                                  length:_sectionRequestedLength error:error];
+}
+
+- (nullable NSString *)sectionDescription {
+    if (!_sectionMode) return nil;
+    return [NSString stringWithFormat:@"Bytes %@ to %@ of %@",
+            NppSizeText(_sectionStart), NppSizeText(_sectionEnd), NppSizeText(_totalFileSize)];
+}
+
+// Finds the first newline in buf[from, to); returns its index or NSNotFound.
+static NSUInteger NppFindNewline(const uint8_t *buf, NSUInteger from, NSUInteger to) {
+    for (NSUInteger i = from; i < to; i++) if (buf[i] == '\n') return i;
+    return NSNotFound;
+}
+
+// Finds the last newline in buf[from, to); returns its index or NSNotFound.
+static NSUInteger NppFindLastNewline(const uint8_t *buf, NSUInteger from, NSUInteger to) {
+    for (NSUInteger i = to; i > from; i--) if (buf[i - 1] == '\n') return i - 1;
+    return NSNotFound;
+}
+
+- (BOOL)loadSectionOfFileAtPath:(NSString *)path offset:(unsigned long long)offset
+                         length:(unsigned long long)length error:(NSError **)error {
+    NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:path];
+    if (!fh) {
+        if (error) *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadNoSuchFileError userInfo:nil];
+        return NO;
+    }
+    unsigned long long total = [[[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil][NSFileSize] unsignedLongLongValue];
+    const unsigned long long kSnapWindow = 64ULL * 1024;   // search window for a line break
+    if (offset > total) offset = total;
+    unsigned long long wantEnd = MIN(total, offset + length);
+
+    // Read one byte before the offset (to see whether it starts a line), the requested range,
+    // and a window past its end so the end can snap back to a line break.
+    unsigned long long base = offset > 0 ? offset - 1 : 0;
+    unsigned long long readEnd = MIN(total, wantEnd + kSnapWindow);
+    [fh seekToFileOffset:base];
+    NSData *buf = [fh readDataOfLength:(NSUInteger)(readEnd - base)];
+    [fh closeFile];
+    const uint8_t *b = (const uint8_t *)buf.bytes;
+    NSUInteger n = buf.length;
+    NSUInteger at = (NSUInteger)(offset - base);   // index of `offset` in buf
+
+    // Start: keep the offset if it already begins a line (the byte before is a line break);
+    // otherwise skip forward past the first line break.
+    unsigned long long start = offset;
+    if (offset > 0 && !(at > 0 && at - 1 < n && b[at - 1] == '\n')) {
+        NSUInteger nl = NppFindNewline(b, at, MIN(n, at + (NSUInteger)kSnapWindow));
+        if (nl != NSNotFound) start = base + nl + 1;
+    }
+    // End: pull back to the last line break inside the requested range, unless it is the file end.
+    unsigned long long end = wantEnd;
+    if (wantEnd < total) {
+        NSUInteger reqEnd = (NSUInteger)(wantEnd - base);
+        NSUInteger nl = NppFindLastNewline(b, (NSUInteger)(reqEnd > kSnapWindow ? reqEnd - kSnapWindow : 0), MIN(n, reqEnd));
+        if (nl != NSNotFound) end = base + nl + 1;
+    }
+    if (end <= start) end = wantEnd;   // one very long line: keep the exact range
+
+    NSData *section = [buf subdataWithRange:NSMakeRange((NSUInteger)(start - base), (NSUInteger)(end - start))];
+
+    [_scintillaView message:SCI_SETREADONLY wParam:0 lParam:0];
+    [_scintillaView message:SCI_CLEARALL wParam:0 lParam:0];
+    [_scintillaView message:SCI_ADDTEXT wParam:(uptr_t)section.length lParam:(sptr_t)section.bytes];
+    [_scintillaView message:SCI_EMPTYUNDOBUFFER wParam:0 lParam:0];
+    [_scintillaView message:SCI_SETSAVEPOINT wParam:0 lParam:0];
+    [_scintillaView message:SCI_GOTOPOS wParam:0 lParam:0];
+
+    _filePath = [path copy];
+    _fileEncoding = NSUTF8StringEncoding;
+    _hasBOM = NO;
+    _isModified = NO;
+    _sectionMode = YES;
+    _sectionRequestedLength = length;
+    _lastKnownModDate = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil][NSFileModificationDate];
+    _sectionStart = start;
+    _sectionEnd = end;
+    _totalFileSize = total;
+    _largeFileMode = YES;
+
+    // Huge sections: no syntax colouring and no word wrap, as for large files.
+    [self setLanguage:@""];
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:kPrefLargeFileNoWrap]) {
+        _wordWrapEnabled = NO;
+        [_scintillaView message:SCI_SETWRAPMODE wParam:SC_WRAP_NONE lParam:0];
+    }
+    return YES;
+}
 
 - (BOOL)loadFileAtPath:(NSString *)path error:(NSError **)error {
     // ── Stat once — used for large-file guard AND mtime recording ─────────────
@@ -664,6 +880,7 @@ static NSUInteger nppLargeFileThreshold(void) {
     _backupFilePath = nil;
 
     _largeFileMode = large;
+    _sectionMode = NO;
 
     NSString *ext = path.pathExtension.lowercaseString;
     NSString *lang = extensionLanguageMap()[ext] ?: @"";
@@ -871,6 +1088,7 @@ static BOOL (^sLossySaveConfirmHandler)(NSString *encodingName) = nil;
 }
 
 - (BOOL)saveToPath:(NSString *)path error:(NSError **)error {
+    if (_sectionMode) return [self _saveSectionToPath:path error:error];
     if (![self _writeContentsToPath:path error:error]) return NO;
 
     NSString *oldPath = _filePath;
