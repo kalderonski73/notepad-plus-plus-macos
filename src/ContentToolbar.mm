@@ -167,6 +167,18 @@ static const CGFloat kOverflowButtonWidth  = 22.0;
     }
 }
 
+// Standard symbols for the controls that are drawn as text glyphs in the row.
+- (NSImage *)_symbolImageForAction:(SEL)action {
+    NSString *name = NSStringFromSelector(action);
+    NSString *symbol = nil;
+    if ([name isEqualToString:@"_tabControlNew:"])   symbol = @"plus";
+    else if ([name isEqualToString:@"_tabControlList:"] ||
+             [name isEqualToString:@"_showAllCharsDropdown:"]) symbol = @"chevron.down";
+    else if ([name isEqualToString:@"_tabControlClose:"]) symbol = @"xmark";
+    if (!symbol) return nil;
+    return [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
+}
+
 - (void)_overflowClicked:(NSButton *)sender {
     // The hidden items: each control keeps its image, tooltip, enabled state and action.
     NSMutableArray<NSButton *> *icons = [NSMutableArray array];
@@ -177,7 +189,9 @@ static const CGFloat kOverflowButtonWidth  = 22.0;
         if ([v isKindOfClass:[NSControl class]] && ((NSControl *)v).action) [controls addObject:(NSControl *)v];
         [self _collectControlsIn:v into:controls];
         for (NSControl *c in controls) {
+            // Buttons drawn as text glyphs (+, ▾, ×) have no image: use a symbol for their action.
             NSImage *image = [c isKindOfClass:[NSButton class]] ? ((NSButton *)c).image : nil;
+            if (!image) image = [self _symbolImageForAction:c.action];
             NSButton *icon = [NSButton buttonWithImage:(image ?: [NSImage imageNamed:NSImageNameActionTemplate])
                                                 target:self
                                                 action:@selector(_overflowIconClicked:)];
@@ -200,7 +214,7 @@ static const CGFloat kOverflowButtonWidth  = 22.0;
     column.alignment = NSLayoutAttributeLeading;
     column.spacing = 4;
     column.edgeInsets = NSEdgeInsetsMake(8, 8, 8, 8);
-    const NSUInteger perRow = 6;
+    const NSUInteger perRow = 1;   // one icon per row: a vertical list
     for (NSUInteger start = 0; start < icons.count; start += perRow) {
         NSStackView *row = [[NSStackView alloc] init];
         row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
