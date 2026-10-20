@@ -10,6 +10,8 @@ static const CGFloat kOverflowButtonWidth  = 22.0;
 @property (nonatomic, strong) NSLayoutConstraint *scrollToOverflow;   // used while » is shown
 @property (nonatomic, strong) NSLayoutConstraint *scrollToEdge;       // used while » is hidden
 @property (nonatomic, strong) NSMutableArray<NSNumber *> *widths;     // natural width per item view
+@property (nonatomic, strong) NSPopover *overflowPopover;
+@property (nonatomic, copy) NSArray<NSDictionary *> *overflowEntries;   // {target, action} per icon
 @end
 
 @implementation NppContentToolbar
@@ -166,23 +168,67 @@ static const CGFloat kOverflowButtonWidth  = 22.0;
 }
 
 - (void)_overflowClicked:(NSButton *)sender {
-    NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+    // The hidden items: each control keeps its image, tooltip, enabled state and action.
+    NSMutableArray<NSButton *> *icons = [NSMutableArray array];
+    NSMutableArray<NSDictionary *> *entries = [NSMutableArray array];
     for (NSView *v in self.stack.arrangedSubviews) {
         if (!v.hidden) continue;
         NSMutableArray<NSControl *> *controls = [NSMutableArray array];
         if ([v isKindOfClass:[NSControl class]] && ((NSControl *)v).action) [controls addObject:(NSControl *)v];
         [self _collectControlsIn:v into:controls];
         for (NSControl *c in controls) {
-            NSString *title = c.toolTip.length ? c.toolTip : (c.accessibilityLabel ?: @"");
-            NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:title action:c.action keyEquivalent:@""];
-            mi.target = c.target;
-            if ([c isKindOfClass:[NSButton class]]) mi.image = ((NSButton *)c).image;
-            mi.enabled = c.enabled;
-            [menu addItem:mi];
+            NSImage *image = [c isKindOfClass:[NSButton class]] ? ((NSButton *)c).image : nil;
+            NSButton *icon = [NSButton buttonWithImage:(image ?: [NSImage imageNamed:NSImageNameActionTemplate])
+                                                target:self
+                                                action:@selector(_overflowIconClicked:)];
+            icon.bordered = NO;
+            icon.imageScaling = NSImageScaleProportionallyUpOrDown;
+            icon.toolTip = c.toolTip.length ? c.toolTip : c.accessibilityLabel;
+            icon.enabled = c.enabled;
+            icon.tag = (NSInteger)entries.count;
+            icon.translatesAutoresizingMaskIntoConstraints = NO;
+            [icons addObject:icon];
+            [entries addObject:@{ @"target": c.target ?: [NSNull null], @"action": NSStringFromSelector(c.action) }];
         }
     }
-    if (menu.numberOfItems == 0) return;
-    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, -2) inView:sender];
+    if (icons.count == 0) return;
+    self.overflowEntries = entries;
+
+    // Icons in rows of up to six, in a vertical stack.
+    NSStackView *column = [[NSStackView alloc] init];
+    column.orientation = NSUserInterfaceLayoutOrientationVertical;
+    column.alignment = NSLayoutAttributeLeading;
+    column.spacing = 4;
+    column.edgeInsets = NSEdgeInsetsMake(8, 8, 8, 8);
+    const NSUInteger perRow = 6;
+    for (NSUInteger start = 0; start < icons.count; start += perRow) {
+        NSStackView *row = [[NSStackView alloc] init];
+        row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        row.spacing = 4;
+        for (NSUInteger i = start; i < MIN(start + perRow, icons.count); i++) {
+            [row addArrangedSubview:icons[i]];
+            [icons[i].widthAnchor constraintEqualToConstant:32].active = YES;
+            [icons[i].heightAnchor constraintEqualToConstant:32].active = YES;
+        }
+        [column addArrangedSubview:row];
+    }
+
+    NSViewController *vc = [[NSViewController alloc] init];
+    vc.view = column;
+    NSPopover *popover = [[NSPopover alloc] init];
+    popover.behavior = NSPopoverBehaviorTransient;
+    popover.contentViewController = vc;
+    self.overflowPopover = popover;
+    [popover showRelativeToRect:sender.bounds ofView:sender preferredEdge:NSRectEdgeMinY];
+}
+
+// Runs the original control's action: close the popover first, then send it on.
+- (void)_overflowIconClicked:(NSButton *)icon {
+    NSDictionary *entry = self.overflowEntries[(NSUInteger)icon.tag];
+    id target = [entry[@"target"] isKindOfClass:[NSNull class]] ? nil : entry[@"target"];
+    SEL action = NSSelectorFromString(entry[@"action"]);
+    [self.overflowPopover performClose:nil];
+    [NSApp sendAction:action to:target from:icon];
 }
 
 @end
