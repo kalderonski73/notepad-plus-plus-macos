@@ -4298,6 +4298,12 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     // Document menus (File … ?) in a bar above the editor, as in the Windows layout.
     // The macOS menu bar keeps only the App menu. Pinned under the titlebar+toolbar
     // in Tahoe, like the editor stack.
+    // View > Toggle Toolbar must reach this controller: the window's own action only knows
+    // the title-bar NSToolbar, which Classic no longer has.
+    for (NSMenuItem *top in [NSApp mainMenu].itemArray)
+        for (NSMenuItem *mi in top.submenu.itemArray)
+            if (mi.action == @selector(toggleToolbarShown:)) mi.target = self;
+
     _inWindowMenuBar = [[NppInWindowMenuBar alloc] init];
     _inWindowMenuBar.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:_inWindowMenuBar];
