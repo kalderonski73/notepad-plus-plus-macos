@@ -2396,7 +2396,10 @@ static void NppCollectControls(NSView *root, NSMutableArray<NSControl *> *out) {
     // partially destroyed the window setup and made File > New fall through
     // to NSDocumentController. Gate set to the correct minimum below.
     if (@available(macOS 15.0, *)) {
-        tb.allowsDisplayModeCustomization = NO;
+        // Set by name: the property only exists in the macOS 15 SDK, so a direct
+        // assignment fails to compile on older build machines (CI runs macos-14).
+        if ([tb respondsToSelector:NSSelectorFromString(@"setAllowsDisplayModeCustomization:")])
+            [tb setValue:@NO forKey:@"allowsDisplayModeCustomization"];
     }
     self.window.toolbar = tb;
     self.window.toolbar.visible = [[NSUserDefaults standardUserDefaults] boolForKey:kPrefToolbarVisible];
