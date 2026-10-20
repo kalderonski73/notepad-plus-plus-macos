@@ -888,6 +888,13 @@ static NSMenu *buildLanguageMenu() {
     // [helpMenu addItem:item(@"NP++ Community (Forum)", @selector(openNppForum:),       @"")];
     addSep(helpMenu);
     [helpMenu addItem:item(@"Debug Info…", @selector(showDebugInfo:), @"")];
+
+    // Document menus (File … ?) are shown in the window's own menu bar, not the
+    // macOS menu bar. They stay in NSApp.mainMenu, so every lookup, shortcut and
+    // localization pass still sees them; only the system bar hides them.
+    for (NSInteger i = 1; i < main.numberOfItems; i++) {
+        [main itemAtIndex:i].hidden = YES;
+    }
 }
 
 + (void)insertPluginMenuItems:(NSArray<NSMenuItem *> *)items {

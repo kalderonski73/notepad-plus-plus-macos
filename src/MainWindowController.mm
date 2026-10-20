@@ -13,6 +13,7 @@
 #import "SearchEngine.h"
 #import "NPPBatchDialog.h"
 #import "MenuBuilder.h"
+#import "InWindowMenuBar.h"
 #import "ColumnEditorPanel.h"
 // FindInFilesPanel removed — all search goes through FindWindow
 #import "SidePanelHost.h"
@@ -1986,6 +1987,7 @@ static void _nppTahoeRoundEditorCard(NSView *container, NSView *content) {
 @end
 
 @implementation MainWindowController {
+    NppInWindowMenuBar *_inWindowMenuBar;
     TabManager       *_tabManager;
     FindReplacePanel *_findPanel;
     NSView           *_statusBar;
@@ -4216,11 +4218,24 @@ static BOOL groupHasTrailingSep(NSString *ident) {
     CGFloat edgeInset = _tahoeGlass ? 8.0 : 0.0;
     CGFloat topInset  = _tahoeGlass ? 6.0 : 0.0;
 
+    // Document menus (File … ?) in a bar above the editor, as in the Windows layout.
+    // The macOS menu bar keeps only the App menu. Pinned under the titlebar+toolbar
+    // in Tahoe, like the editor stack.
+    _inWindowMenuBar = [[NppInWindowMenuBar alloc] init];
+    _inWindowMenuBar.translatesAutoresizingMaskIntoConstraints = NO;
+    [content addSubview:_inWindowMenuBar];
+    [NSLayoutConstraint activateConstraints:@[
+        [_inWindowMenuBar.topAnchor constraintEqualToAnchor:(_tahoeGlass ? ((NSLayoutGuide *)self.window.contentLayoutGuide).topAnchor : content.topAnchor)],
+        [_inWindowMenuBar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+        [_inWindowMenuBar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+        [_inWindowMenuBar.heightAnchor constraintEqualToConstant:24.0],
+    ]];
+
     [NSLayoutConstraint activateConstraints:@[
         // Search split view fills from top to incremental search bar. In Tahoe the
         // content view spans the whole window (FullSizeContentView), so pin the top
         // to contentLayoutGuide (below the titlebar+toolbar) instead of content.top.
-        [_searchSplitView.topAnchor constraintEqualToAnchor:(_tahoeGlass ? ((NSLayoutGuide *)self.window.contentLayoutGuide).topAnchor : content.topAnchor) constant:topInset],
+        [_searchSplitView.topAnchor constraintEqualToAnchor:_inWindowMenuBar.bottomAnchor constant:topInset],
         [_searchSplitView.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:edgeInset],
         [_searchSplitView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-edgeInset],
         [_searchSplitView.bottomAnchor constraintEqualToAnchor:_incSearchBar.topAnchor constant:(_tahoeGlass ? -6.0 : 0.0)],

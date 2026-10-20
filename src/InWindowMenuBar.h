@@ -1,0 +1,12 @@
+#import <Cocoa/Cocoa.h>
+
+/// A menu bar drawn inside the main window, above the tabs. It shows one button per
+/// document menu (File … ?) and pops up the same NSMenu the macOS menu bar would show.
+/// The menus themselves stay in NSApp.mainMenu, so their actions and shortcuts are unchanged.
+@interface NppInWindowMenuBar : NSView
+
+/// Rebuild the buttons from the top-level items of NSApp.mainMenu that are hidden from the
+/// macOS menu bar. Call again after the menus are translated to a new language.
+- (void)rebuildFromMainMenu;
+
+@end
