@@ -235,6 +235,22 @@ static _FTPanelButton *_panelBtn(NSString *iconName, NSString *tip, id target, S
     [[_searchField cell] setScrollable:YES];
     [self addSubview:_searchField];
 
+    // Folder button inside the field's right edge: opens the folder chooser (Add Folder…).
+    NSButton *pick = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"folder.badge.plus"
+                                                          accessibilityDescription:@"Add Folder"]
+                                        target:self action:@selector(_addFolder:)];
+    pick.bordered = NO;
+    pick.imageScaling = NSImageScaleProportionallyDown;
+    pick.toolTip = @"Add Folder…";
+    pick.translatesAutoresizingMaskIntoConstraints = NO;
+    [_searchField addSubview:pick];
+    [NSLayoutConstraint activateConstraints:@[
+        [pick.trailingAnchor constraintEqualToAnchor:_searchField.trailingAnchor constant:-4],
+        [pick.centerYAnchor constraintEqualToAnchor:_searchField.centerYAnchor],
+        [pick.widthAnchor constraintEqualToConstant:18],
+        [pick.heightAnchor constraintEqualToConstant:18],
+    ]];
+
     _refreshButton   = _panelBtn(@"funclstReload",          @"Refresh",             self, @selector(_refreshAll:));
     _unfoldAllButton = _panelBtn(@"fb_expand_all",          @"Expand All",          self, @selector(_unfoldAll:));
     _foldAllButton   = _panelBtn(@"fb_fold_all",            @"Fold All",            self, @selector(_foldAll:));
